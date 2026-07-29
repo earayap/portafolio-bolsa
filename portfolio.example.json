@@ -1,0 +1,7 @@
+{
+  "QUINENCO.SN": {"nombre": "Quiñenco S.A.", "cantidad": 100, "precio_compra": 4000.00},
+  "ECL.SN": {"nombre": "Engie Energía Chile", "cantidad": 50, "precio_compra": 1400.00},
+  "BICE.SN": {"nombre": "Banco BICE", "cantidad": 200, "precio_compra": 350.00},
+  "PEHUENCHE.SN": {"nombre": "Empresa Eléctrica Pehuenche", "cantidad": 80, "precio_compra": 2500.00},
+  "LIPIGAS.SN": {"nombre": "Empresas Lipigas", "cantidad": 30, "precio_compra": 8000.00}
+}

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Distribución · Bolsa de Santiago</title>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">
+            <div class="brand-mark">🥧</div>
+            <div class="brand-text">
+                <h1>Distribución del Portafolio</h1>
+                <span>Bolsa de Comercio de Santiago</span>
+            </div>
+        </div>
+        <nav class="topnav">
+            <a href="/">Resumen</a>
+            <a href="/distribucion" class="active">Distribución</a>
+        </nav>
+        <div class="topbar-actions">
+            <div class="market-clock" id="clock"></div>
+            <button class="btn btn-ghost btn-icon" id="eyeBtn" title="Ocultar montos">👁️</button>
+            <button class="btn btn-ghost btn-icon" id="themeBtn" title="Cambiar tema">☀️</button>
+        </div>
+    </header>
+
+    <div id="loader" class="loader-overlay">
+        <div class="spinner"></div>
+        <p id="loaderText">Cargando distribución del portafolio…</p>
+    </div>
+
+    <main class="layout">
+        <p class="dist-intro" id="distIntro">
+            Composición del portafolio por acción. Dividendos considerados desde
+            <strong id="sinceLabel">—</strong> en adelante.
+        </p>
+
+        <div class="pies">
+            <!-- Cantidad de acciones -->
+            <section class="pie-card">
+                <div class="pie-head">
+                    <h2>Cantidad de acciones</h2>
+                    <div class="pie-total" id="totalCantidad">—</div>
+                </div>
+                <div class="pie-wrap"><canvas id="pieCantidad"></canvas></div>
+                <div class="pie-legend" id="legendCantidad"></div>
+            </section>
+
+            <!-- Valor de mercado -->
+            <section class="pie-card">
+                <div class="pie-head">
+                    <h2>Valor de las acciones</h2>
+                    <div class="pie-total" id="totalValor">—</div>
+                </div>
+                <div class="pie-wrap"><canvas id="pieValor"></canvas></div>
+                <div class="pie-legend" id="legendValor"></div>
+            </section>
+
+            <!-- Dividendos pagados -->
+            <section class="pie-card">
+                <div class="pie-head">
+                    <h2>Dividendos pagados</h2>
+                    <div class="pie-total" id="totalDividendos">—</div>
+                </div>
+                <div class="pie-wrap"><canvas id="pieDividendos"></canvas></div>
+                <div class="pie-legend" id="legendDividendos"></div>
+            </section>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <span>Datos: Yahoo Finance (yfinance) con cache local y fallback.</span>
+        <span id="lastUpdate"></span>
+    </footer>
+
+    <script src="{{ url_for('static', filename='js/distribucion.js') }}"></script>
+</body>
+</html>

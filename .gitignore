@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+data/*.db
+*.log
+.DS_Store
+
+# Portafolio real del usuario (datos personales/sensibles) — nunca a git.
+portfolio.json
+
+# Artefactos de build de PyInstaller
+build/
+dist/
+*.spec

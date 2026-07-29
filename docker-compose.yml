@@ -1,0 +1,12 @@
+services:
+  portafolio:
+    build: .
+    container_name: portafolio-bolsa-santiago
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persiste la cache SQLite entre reinicios del contenedor
+      - ./data:/app/data
+    environment:
+      - PORT=8000
+    restart: unless-stopped

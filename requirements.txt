@@ -1,0 +1,10 @@
+Flask==3.0.3
+# yfinance 0.2.44 quedó incompatible con la API actual de Yahoo (devuelve
+# respuestas vacías). Se requiere una versión moderna con manejo de cookie/crumb.
+yfinance==1.5.2
+curl_cffi>=0.7.0
+pandas==2.2.2
+numpy==1.26.4
+gunicorn==22.0.0
+requests==2.32.3
+tzdata==2025.2

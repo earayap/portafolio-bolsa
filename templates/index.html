@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portafolio · Bolsa de Santiago</title>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3.4.4/build/global/luxon.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1/dist/chartjs-adapter-luxon.umd.min.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">
+            <div class="brand-mark">📈</div>
+            <div class="brand-text">
+                <h1>Portafolio Bursátil</h1>
+                <span>Bolsa de Comercio de Santiago</span>
+            </div>
+        </div>
+        <nav class="topnav">
+            <a href="/" class="active">Resumen</a>
+            <a href="/distribucion">Distribución</a>
+        </nav>
+        <div class="topbar-actions">
+            <div class="market-clock" id="clock"></div>
+            <button class="btn btn-ghost" id="refreshBtn" title="Actualizar datos">
+                <span class="ico">⟳</span> Actualizar
+            </button>
+            <button class="btn btn-ghost btn-icon" id="eyeBtn" title="Ocultar montos">👁️</button>
+            <button class="btn btn-ghost btn-icon" id="themeBtn" title="Cambiar tema">☀️</button>
+        </div>
+    </header>
+
+    <div id="loader" class="loader-overlay">
+        <div class="spinner"></div>
+        <p id="loaderText">Cargando datos del portafolio…</p>
+    </div>
+
+    <main class="layout">
+        <!-- Panel resumen -->
+        <section class="kpis" id="kpis"></section>
+
+        <div class="content">
+            <!-- Listado lateral -->
+            <aside class="sidebar">
+                <div class="sidebar-head">
+                    <h2>Acciones</h2>
+                    <input type="search" id="search" placeholder="Buscar…" autocomplete="off">
+                </div>
+                <ul class="stock-list" id="stockList"></ul>
+            </aside>
+
+            <!-- Detalle -->
+            <section class="detail">
+                <div class="detail-head">
+                    <div>
+                        <h2 id="detailName">—</h2>
+                        <div class="detail-sub">
+                            <span id="detailTicker" class="chip"></span>
+                            <span id="detailSector" class="muted"></span>
+                            <span id="detailSource" class="chip chip-source"></span>
+                        </div>
+                    </div>
+                    <div class="detail-price">
+                        <span id="detailPrice" class="price">—</span>
+                        <span id="detailChange" class="change"></span>
+                    </div>
+                </div>
+
+                <div class="detail-warn" id="detailWarn"></div>
+
+                <div class="range-tabs" id="rangeTabs">
+                    <button data-range="1m">1M</button>
+                    <button data-range="3m">3M</button>
+                    <button data-range="6m">6M</button>
+                    <button data-range="1y" class="active">1A</button>
+                    <button data-range="2y">2A</button>
+                    <button data-range="all">Máx</button>
+                </div>
+
+                <div class="chart-card">
+                    <div class="chart-wrap"><canvas id="priceChart"></canvas></div>
+                </div>
+                <div class="chart-card">
+                    <div class="chart-title">Volumen transado</div>
+                    <div class="chart-wrap chart-wrap-sm"><canvas id="volumeChart"></canvas></div>
+                </div>
+
+                <div class="stats-grid" id="statsGrid"></div>
+            </section>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <span>Datos: Yahoo Finance (yfinance) con cache local y fallback.</span>
+        <span id="lastUpdate"></span>
+    </footer>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
