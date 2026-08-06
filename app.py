@@ -4,12 +4,14 @@ import json
 import os
 import sys
 import threading
+from datetime import datetime
 
 from flask import Flask, jsonify, render_template, request
 
 import config
 import data_service
 import screener
+import backtest
 
 app = Flask(__name__)
 
@@ -55,6 +57,10 @@ def _warmup_data():
     """Descarga/hidrata la cache al arrancar, sin bloquear el servidor."""
     data_service.init_db()
     _warmup["results"] = data_service.refresh_all(force=False)
+    # UF/TPM de años anteriores (mindicador.cl solo trae los últimos días por
+    # defecto). Necesario para que /api/backtest pueda evaluar fechas pasadas.
+    anio_actual = datetime.now().year
+    data_service.backfill_indicadores_historicos(range(anio_actual - config.HISTORY_YEARS, anio_actual + 1))
     _warmup["done"] = True
 
 
@@ -74,6 +80,11 @@ def distribucion():
 @app.route("/screener")
 def screener_page():
     return render_template("screener.html")
+
+
+@app.route("/backtest")
+def backtest_page():
+    return render_template("backtest.html")
 
 
 @app.route("/api/status")
@@ -169,6 +180,16 @@ def api_screener():
     basada en Sharpe, dividend yield, retorno real (ajustado por UF), beta
     vs IPSA y drawdown máximo."""
     return jsonify(screener.evaluate_all(list(PORTAFOLIO.keys())))
+
+
+@app.route("/api/backtest")
+def api_backtest():
+    """Backtest de la señal del screener: retorno futuro realizado (6 meses)
+    según la señal COMPRAR/MANTENER/VENDER de cada punto histórico. Solo usa
+    la parte precio/dividendos del score (no fundamentales, que no tienen
+    historia guardada). Ver backtest.py."""
+    years = request.args.get("years", 3, type=int)
+    return jsonify(backtest.backtest_portafolio(list(PORTAFOLIO.keys()), years=years))
 
 
 @app.route("/api/refresh", methods=["POST"])

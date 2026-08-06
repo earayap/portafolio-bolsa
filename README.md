@@ -98,6 +98,7 @@ el instalador lo empaqueta junto al resto de la app.
 | GET | `/api/screener` | Señal COMPRAR/MANTENER/VENDER por acción, con sus métricas |
 | GET | `/api/fundamentales` | P/E, P/B, ROE, margen neto, deuda/patrimonio y sector por acción |
 | GET | `/api/fundamentales/<ticker>` | Fundamentales de una acción puntual |
+| GET | `/api/backtest?years=3` | Retorno futuro realizado según la señal histórica del screener |
 | POST | `/api/refresh?ticker=<opcional>` | Fuerza actualización desde la API |
 
 ## Screener cuantitativo
@@ -144,6 +145,28 @@ baja liquidez Yahoo Finance a veces devuelve campos con órdenes de magnitud
 absurdas (P/B > 1000, márgenes > 800%). Esos valores se descartan y se
 muestran como "no disponible" en vez de un dato engañoso. Se cachean en la
 tabla `fundamentales` con el mismo TTL que los precios.
+
+## Backtest de la señal (`/backtest`)
+
+Responde la pregunta: *si hubiera seguido esta señal en el pasado, ¿habría
+funcionado?* `backtest.py` recorre la historia de precios (se descargan 4
+años — ver `HISTORY_YEARS` en `config.py`) y, cada ~1 mes bursátil, recalcula
+el score usando **solo datos disponibles hasta esa fecha** (ventana de 1
+año hacia atrás, dividendos pagados hasta ese día — nunca información
+futura) y mide el retorno real de la acción en los 6 meses siguientes.
+
+**Limitación deliberada:** solo se backtestea la parte de precios/dividendos
+del score (Sharpe, volatilidad, beta, drawdown, retorno real, dividend
+yield). Los fundamentales (P/E, ROE) quedan fuera porque solo se guarda el
+dato *actual* — no hay forma de saber cuál era el P/E de una acción hace 2
+años sin una fuente de historia fundamental, que no existe gratis para
+emisores chilenos no bancarios (ver sección anterior). Meter fundamentales
+"de hoy" en una evaluación de hace 2 años sería sesgo de información futura
+(look-ahead bias) y falsearía el resultado.
+
+Requiere también historia multianual de UF y TPM (`mindicador.cl` solo trae
+los últimos días por defecto); `data_service.backfill_indicadores_historicos`
+la descarga una vez al arrancar, año por año.
 
 ## Indicadores macroeconómicos
 

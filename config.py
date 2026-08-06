@@ -25,8 +25,10 @@ else:
 DB_PATH = os.path.join(BASE_DIR, "data", "portfolio.db")
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
-# Años de historia a descargar
-HISTORY_YEARS = 2
+# Años de historia a descargar. 4 años porque el backtest (backtest.py)
+# necesita puntos de evaluación repartidos en 3 años, cada uno mirando 1 año
+# hacia atrás para calcular sus métricas (Sharpe, volatilidad, etc.).
+HISTORY_YEARS = 4
 
 # Tiempo (en horas) que un dato en cache se considera "fresco".
 # Pasado este umbral, la app intenta actualizar desde la API.

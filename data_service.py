@@ -295,8 +295,32 @@ def _refresh_dividends(ticker):
 
 
 def get_dividends_per_share(ticker, since):
-    """Dividendo total por acción pagado desde `since` (inclusive)."""
+    """Dividendo total por acción pagado desde `since` (inclusive) hasta hoy."""
     return _dividends_per_share(ticker, since)
+
+
+def get_dividends_per_share_rango(ticker, since, hasta):
+    """Dividendo total por acción pagado entre `since` y `hasta` (ambos
+    inclusive). A diferencia de get_dividends_per_share (que asume "hasta
+    hoy"), esta respeta un corte en el pasado — indispensable para el
+    backtest, que no debe usar dividendos pagados después de la fecha que
+    está evaluando (look-ahead bias)."""
+    try:
+        from dividendos_bcs import DIVIDENDOS_BCS
+    except ImportError:
+        DIVIDENDOS_BCS = {}
+
+    if ticker in DIVIDENDOS_BCS:
+        return sum(
+            d["amount"] for d in DIVIDENDOS_BCS[ticker] if since <= d["date"] <= hasta
+        )
+
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT amount FROM dividends WHERE ticker = ? AND date >= ? AND date <= ?",
+            (ticker, since, hasta),
+        ).fetchall()
+    return sum((r["amount"] or 0) for r in rows)
 
 
 def get_dividends_total(ticker, since="2025-03-01"):
@@ -471,6 +495,31 @@ def get_indicadores():
             """
         ).fetchall()
     return {r["codigo"]: {"date": r["date"], "value": r["value"]} for r in rows}
+
+
+def backfill_indicadores_historicos(anios):
+    """Descarga UF y TPM de años anteriores (mindicador.cl solo trae los
+    últimos días por defecto). Necesario para que el backtest pueda calcular
+    retorno real y tasa libre de riesgo en fechas pasadas. Best-effort."""
+    import indicadores_macro
+    for codigo in ("uf", "tpm"):
+        try:
+            recs = indicadores_macro.fetch_historico(codigo, anios)
+            _save_indicadores({codigo: recs})
+            log.info("Backfill %s: %d puntos (%s)", codigo, len(recs), anios)
+        except Exception as exc:
+            log.error("Fallo el backfill de %s: %s", codigo, exc)
+
+
+def get_indicador_valor_en(codigo, fecha):
+    """Último valor conocido de un indicador en o antes de `fecha` (YYYY-MM-DD)."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT value FROM indicadores WHERE codigo = ? AND date <= ? "
+            "ORDER BY date DESC LIMIT 1",
+            (codigo, fecha),
+        ).fetchone()
+    return row["value"] if row else None
 
 
 def get_indicador_historial(codigo, limit=90):

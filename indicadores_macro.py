@@ -63,3 +63,27 @@ def fetch_uf_hoy():
     if not recs:
         return None
     return max(recs, key=lambda r: r["date"])
+
+
+def fetch_historico(codigo, anios):
+    """Descarga la serie de un indicador para varios años (mindicador.cl
+    expone /api/<codigo>/<anio> con el año completo). Se usa para el
+    backtesting, que necesita UF y TPM de años anteriores, no solo los
+    últimos días que trae el endpoint por defecto."""
+    records = []
+    for anio in anios:
+        try:
+            resp = requests.get(f"{BASE_URL}/{codigo}/{anio}", timeout=TIMEOUT)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as exc:
+            log.warning("No se pudo descargar %s del año %s: %s", codigo, anio, exc)
+            continue
+        for punto in data.get("serie", []):
+            try:
+                fecha = punto["fecha"][:10]
+                valor = float(punto["valor"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            records.append({"codigo": codigo, "date": fecha, "value": valor})
+    return records

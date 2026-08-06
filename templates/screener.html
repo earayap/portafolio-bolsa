@@ -20,6 +20,7 @@
             <a href="/">Resumen</a>
             <a href="/distribucion">Distribución</a>
             <a href="/screener" class="active">Screener</a>
+            <a href="/backtest">Backtest</a>
         </nav>
         <div class="topbar-actions">
             <div class="market-clock" id="clock"></div>
@@ -43,21 +44,33 @@
 
         <div class="kpis" id="screenerKpis"></div>
 
+        <div class="legend-box">
+            <div class="legend-item"><strong>Sharpe</strong> — retorno anualizado menos la TPM, dividido por la volatilidad. Más alto = mejor retorno por cada unidad de riesgo asumido.</div>
+            <div class="legend-item"><strong>Retorno anual</strong> — variación del precio en el último año bursátil, anualizada.</div>
+            <div class="legend-item"><strong>Retorno real (UF)</strong> — retorno anual menos la variación de la UF en el mismo período: descuenta la inflación.</div>
+            <div class="legend-item"><strong>Volatilidad</strong> — variación anualizada del precio (desviación estándar de los retornos diarios). Más alta = más riesgo.</div>
+            <div class="legend-item"><strong>Beta</strong> — sensibilidad frente al mercado chileno (proxy ECH). &gt;1 se mueve más que el mercado, &lt;1 se mueve menos.</div>
+            <div class="legend-item"><strong>Drawdown máx.</strong> — la mayor caída desde un máximo dentro del período. El peor escenario ya vivido.</div>
+            <div class="legend-item"><strong>Div. yield</strong> — dividendos pagados en los últimos 12 meses, como % del precio actual.</div>
+            <div class="legend-item"><strong>P/E</strong> — precio dividido por la utilidad por acción. Más bajo = más barata en relación a lo que gana.</div>
+            <div class="legend-item"><strong>ROE</strong> — utilidad neta sobre el patrimonio. Más alto = el negocio es más rentable para sus dueños.</div>
+        </div>
+
         <div class="screener-table-wrap">
             <table class="screener-table">
                 <thead>
                     <tr>
                         <th>Acción</th>
                         <th>Señal</th>
-                        <th>Sharpe</th>
-                        <th>Retorno anual</th>
-                        <th>Retorno real (UF)</th>
-                        <th>Volatilidad</th>
-                        <th>Beta</th>
-                        <th>Drawdown máx.</th>
-                        <th>Div. yield</th>
-                        <th>P/E</th>
-                        <th>ROE</th>
+                        <th title="Retorno ajustado por riesgo: retorno anual menos la TPM, sobre la volatilidad">Sharpe</th>
+                        <th title="Variación del precio en el último año bursátil, anualizada">Retorno anual</th>
+                        <th title="Retorno anual menos la variación de la UF: descuenta la inflación">Retorno real (UF)</th>
+                        <th title="Desviación estándar anualizada de los retornos diarios">Volatilidad</th>
+                        <th title="Sensibilidad frente al mercado chileno (proxy ECH)">Beta</th>
+                        <th title="Mayor caída desde un máximo dentro del período">Drawdown máx.</th>
+                        <th title="Dividendos pagados en los últimos 12 meses, como % del precio">Div. yield</th>
+                        <th title="Precio / utilidad por acción">P/E</th>
+                        <th title="Utilidad neta / patrimonio">ROE</th>
                         <th>Motivos</th>
                     </tr>
                 </thead>
