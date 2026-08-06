@@ -105,30 +105,69 @@ el instalador lo empaqueta junto al resto de la app.
 ## Screener cuantitativo
 
 `screener.py` calcula, para cada acción del portafolio, sobre el último año
-bursátil:
+bursátil (252 ruedas, `LOOKBACK_DAYS`):
 
-- **Sharpe ratio** (retorno anualizado menos la TPM vigente, sobre la
-  volatilidad anualizada).
+- **Retorno diario simple** — base de casi todo lo demás:
+  ```
+  r_t = (P_t - P_(t-1)) / P_(t-1)
+  ```
+
+- **Retorno anualizado** — compuesto sobre el período observado:
+  ```
+  retorno_anual = (P_final / P_inicial) ^ (252 / n_dias) - 1
+  ```
+
+- **Volatilidad anualizada** — desviación estándar muestral de los retornos
+  diarios, escalada a un año:
+  ```
+  volatilidad_anual = desviación_estándar(r_1..r_n) × √252
+  ```
+
+- **Sharpe ratio** — retorno anualizado menos la TPM vigente (como tasa
+  libre de riesgo en CLP), sobre la volatilidad anualizada:
+  ```
+  sharpe = (retorno_anual - TPM/100) / volatilidad_anual
+  ```
+
 - **Beta** vs el mercado chileno, usando **ECH** (iShares MSCI Chile ETF)
-  como proxy — Yahoo Finance no tiene historia utilizable para `^IPSA`.
-- **Drawdown máximo** en el período.
-- **Retorno real**: retorno nominal menos la variación de la UF (descuenta
-  inflación).
-- **Dividend yield** (12 meses, con precedencia de la tabla oficial BCS).
+  como proxy — Yahoo Finance no tiene historia utilizable para `^IPSA`:
+  ```
+  beta = Covarianza(r_acción, r_mercado) / Varianza(r_mercado)
+  ```
 
-Con esas métricas arma un puntaje y una señal (`COMPRAR` / `MANTENER` /
-`VENDER`) con reglas duras: premia Sharpe alto y dividend yield alto, castiga
-Sharpe negativo, retorno real negativo, drawdown severo y beta alto sin
-retorno que lo respalde. Es determinístico y transparente — no hay
+- **Drawdown máximo** — la peor caída desde cualquier máximo previo dentro
+  del período:
+  ```
+  drawdown_max = mín para todo t de [ (P_t - máx(P_1..P_t)) / máx(P_1..P_t) ]
+  ```
+
+- **Retorno real** — retorno nominal del período menos la variación de la
+  UF en el mismo período (descuenta inflación):
+  ```
+  retorno_real = retorno_nominal - (UF_final - UF_inicial) / UF_inicial
+  ```
+
+- **Dividend yield** — dividendos por acción pagados en los últimos 12
+  meses (con precedencia de la tabla oficial BCS), sobre el precio actual:
+  ```
+  dividend_yield = dividendos_12m_por_acción / precio_actual
+  ```
+
+Con esas métricas arma un puntaje: `+2` si Sharpe > 1, `+1` si > 0.5, `-2`
+si < 0; `+2` si dividend yield > 5%, `+1` si > 2%; `-2` si retorno real
+< -10%, `+1` si > 5%; `-1` si drawdown < -40%; `-1` si beta > 1.5 sin Sharpe
+que lo respalde. El puntaje total define la señal: `≥3` COMPRAR, `<0`
+VENDER, el resto MANTENER. Es determinístico y transparente — no hay
 proyecciones ni narrativa, solo lo ya observado.
 
 Cuando hay fundamentales disponibles (ver sección siguiente), también suman
 al puntaje: **P/E bajo** (≤12, barata en relación a sus utilidades) o
-**ROE alto** (>15%) suman; **P/E negativo o alto** (>30), **ROE bajo** (<3%)
-o **deuda/patrimonio alta** (>150, solo para empresas no financieras — el
-apalancamiento de un banco como BICE es su modelo de negocio, no una señal
-de riesgo) restan. Si un ticker no tiene fundamentales confiables, esas
-reglas simplemente no aplican — el score no penaliza por falta de dato.
+**ROE alto** (>15%) suman `+1` cada uno; **P/E negativo o alto** (>30),
+**ROE bajo** (<3%) o **deuda/patrimonio alta** (>150, solo para empresas no
+financieras — el apalancamiento de un banco como BICE es su modelo de
+negocio, no una señal de riesgo) restan `-1` cada uno. Si un ticker no tiene
+fundamentales confiables, esas reglas simplemente no aplican — el score no
+penaliza por falta de dato.
 
 ## Datos fundamentales (P/E, P/B, ROE, margen, deuda)
 
@@ -157,13 +196,23 @@ año hacia atrás, dividendos pagados hasta ese día — nunca información
 futura) y mide el retorno real de la acción en los 6 meses siguientes.
 
 **Limitación deliberada:** solo se backtestea la parte de precios/dividendos
-del score (Sharpe, volatilidad, beta, drawdown, retorno real, dividend
-yield). Los fundamentales (P/E, ROE) quedan fuera porque solo se guarda el
-dato *actual* — no hay forma de saber cuál era el P/E de una acción hace 2
-años sin una fuente de historia fundamental, que no existe gratis para
-emisores chilenos no bancarios (ver sección anterior). Meter fundamentales
-"de hoy" en una evaluación de hace 2 años sería sesgo de información futura
-(look-ahead bias) y falsearía el resultado.
+del score (las mismas fórmulas de la sección anterior, recalculadas con la
+ventana de 1 año que termina en cada fecha histórica evaluada — nunca con
+datos posteriores a esa fecha). Los fundamentales (P/E, ROE) quedan fuera
+porque solo se guarda el dato *actual* — no hay forma de saber cuál era el
+P/E de una acción hace 2 años sin una fuente de historia fundamental, que
+no existe gratis para emisores chilenos no bancarios (ver sección
+anterior). Meter fundamentales "de hoy" en una evaluación de hace 2 años
+sería sesgo de información futura (look-ahead bias) y falsearía el
+resultado.
+
+El retorno futuro que valida cada señal se mide así (`HORIZON_DAYS` = 126
+ruedas, ~6 meses):
+```
+retorno_fwd = (P_(t + 126) - P_t) / P_t
+```
+y la tasa de acierto por señal es simplemente el % de esos puntos con
+`retorno_fwd > 0`.
 
 Requiere también historia multianual de UF y TPM (`mindicador.cl` solo trae
 los últimos días por defecto); `data_service.backfill_indicadores_historicos`
@@ -173,9 +222,30 @@ la descarga una vez al arrancar, año por año.
 
 Simulación de Monte Carlo (movimiento geométrico browniano) que usa el
 retorno y la volatilidad **históricos** de la propia acción (últimos ~2
-años de retornos logarítmicos diarios) para generar 2.000 trayectorias de
-precio posibles, y así estimar la probabilidad de que la acción esté más
-arriba o más abajo que hoy a 1, 3, 6 o 12 meses.
+años de retornos logarítmicos diarios, `LOOKBACK_DIAS` = 504) para generar
+2.000 trayectorias de precio posibles, y así estimar la probabilidad de
+que la acción esté más arriba o más abajo que hoy a 1, 3, 6 o 12 meses.
+
+**Fórmulas:** se usan retornos *logarítmicos* (no simples) porque son los
+que se componen correctamente en el tiempo bajo este modelo:
+```
+retorno_log_t = ln(P_t / P_(t-1))
+μ = promedio(retorno_log_1..n)          # drift diario
+σ = desviación_estándar(retorno_log_1..n)  # volatilidad diaria
+```
+Cada trayectoria simulada avanza día a día como:
+```
+P_t = P_0 × exp( (μ - σ²/2) × t + σ × √t × Z )      con Z ~ Normal(0, 1)
+```
+El término `-σ²/2` es la corrección de Itô: sin ella, promediar muchas
+trayectorias multiplicativas sobreestimaría el precio esperado. Con las
+2.000 trayectorias simuladas, la probabilidad de subir es simplemente:
+```
+P(sube) = % de trayectorias donde P_final > P_actual
+```
+y los percentiles 10/50/90 de `P_final` (y de cada día intermedio, para el
+gráfico de abanico) se calculan directamente sobre esa distribución
+simulada.
 
 **No es una predicción.** Asume que el comportamiento estadístico pasado
 del precio (su drift y volatilidad) se parece al futuro cercano — una
