@@ -12,6 +12,7 @@ import config
 import data_service
 import screener
 import backtest
+import simulador
 
 app = Flask(__name__)
 
@@ -85,6 +86,11 @@ def screener_page():
 @app.route("/backtest")
 def backtest_page():
     return render_template("backtest.html")
+
+
+@app.route("/simulador")
+def simulador_page():
+    return render_template("simulador.html", portfolio=PORTAFOLIO)
 
 
 @app.route("/api/status")
@@ -190,6 +196,21 @@ def api_backtest():
     historia guardada). Ver backtest.py."""
     years = request.args.get("years", 3, type=int)
     return jsonify(backtest.backtest_portafolio(list(PORTAFOLIO.keys()), years=years))
+
+
+@app.route("/api/simulador/<ticker>")
+def api_simulador(ticker):
+    """Simulación de Monte Carlo (movimiento geométrico browniano) usando el
+    retorno y la volatilidad histórica de la propia acción. Es estadístico,
+    no una predicción — ver simulador.py."""
+    if ticker not in PORTAFOLIO:
+        return jsonify({"error": "Acción no encontrada"}), 404
+    horizonte = request.args.get("horizonte", "6m")
+    resultado = simulador.simular(ticker, horizonte)
+    if not resultado:
+        return jsonify({"error": "Historia insuficiente para simular"}), 404
+    resultado["name"] = PORTAFOLIO[ticker].get("nombre", ticker)
+    return jsonify(resultado)
 
 
 @app.route("/api/refresh", methods=["POST"])

@@ -99,6 +99,7 @@ el instalador lo empaqueta junto al resto de la app.
 | GET | `/api/fundamentales` | P/E, P/B, ROE, margen neto, deuda/patrimonio y sector por acción |
 | GET | `/api/fundamentales/<ticker>` | Fundamentales de una acción puntual |
 | GET | `/api/backtest?years=3` | Retorno futuro realizado según la señal histórica del screener |
+| GET | `/api/simulador/<ticker>?horizonte=1m\|3m\|6m\|1a` | Simulación de Monte Carlo: probabilidad de subir/bajar |
 | POST | `/api/refresh?ticker=<opcional>` | Fuerza actualización desde la API |
 
 ## Screener cuantitativo
@@ -167,6 +168,26 @@ emisores chilenos no bancarios (ver sección anterior). Meter fundamentales
 Requiere también historia multianual de UF y TPM (`mindicador.cl` solo trae
 los últimos días por defecto); `data_service.backfill_indicadores_historicos`
 la descarga una vez al arrancar, año por año.
+
+## Simulador de precio (`/simulador`)
+
+Simulación de Monte Carlo (movimiento geométrico browniano) que usa el
+retorno y la volatilidad **históricos** de la propia acción (últimos ~2
+años de retornos logarítmicos diarios) para generar 2.000 trayectorias de
+precio posibles, y así estimar la probabilidad de que la acción esté más
+arriba o más abajo que hoy a 1, 3, 6 o 12 meses.
+
+**No es una predicción.** Asume que el comportamiento estadístico pasado
+del precio (su drift y volatilidad) se parece al futuro cercano — una
+hipótesis razonable a semanas o meses, que se degrada mientras más largo
+el horizonte y que no incorpora ningún catalizador (fusiones, resultados,
+cambios regulatorios). El resultado es consistente con el screener por
+construcción: usan la misma fuente de datos, así que una acción con señal
+VENDER típicamente muestra baja probabilidad de subir aquí también.
+
+La semilla aleatoria es determinística por ticker/fecha/horizonte (mismo
+resultado si se recarga la página el mismo día, cambia al día siguiente
+con datos nuevos).
 
 ## Indicadores macroeconómicos
 

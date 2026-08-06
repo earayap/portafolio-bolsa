@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador · Bolsa de Santiago</title>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3.4.4/build/global/luxon.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1/dist/chartjs-adapter-luxon.umd.min.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">
+            <div class="brand-mark">🎲</div>
+            <div class="brand-text">
+                <h1>Simulador de Precio</h1>
+                <span>Bolsa de Comercio de Santiago</span>
+            </div>
+        </div>
+        <nav class="topnav">
+            <a href="/">Resumen</a>
+            <a href="/distribucion">Distribución</a>
+            <a href="/screener">Screener</a>
+            <a href="/backtest">Backtest</a>
+            <a href="/simulador" class="active">Simulador</a>
+        </nav>
+        <div class="topbar-actions">
+            <div class="market-clock" id="clock"></div>
+            <button class="btn btn-ghost btn-icon" id="themeBtn" title="Cambiar tema">☀️</button>
+        </div>
+    </header>
+
+    <div id="loader" class="loader-overlay">
+        <div class="spinner"></div>
+        <p id="loaderText">Corriendo simulación de Monte Carlo…</p>
+    </div>
+
+    <main class="layout">
+        <p class="dist-intro">
+            Simulación de Monte Carlo (movimiento geométrico browniano) usando el retorno y la
+            volatilidad <strong>históricos</strong> de la propia acción para generar
+            <strong id="nSim">2000</strong> trayectorias de precio posibles. <strong>No es una
+            predicción</strong>: asume que el "ruido" estadístico pasado se parece al futuro
+            cercano, lo cual se degrada mientras más largo el horizonte.
+        </p>
+
+        <div class="sim-controls">
+            <select id="tickerSelect">
+                {% for ticker, info in portfolio.items() %}
+                <option value="{{ ticker }}">{{ info.nombre }} ({{ ticker }})</option>
+                {% endfor %}
+            </select>
+            <div class="range-tabs" id="horizonTabs">
+                <button data-h="1m">1 mes</button>
+                <button data-h="3m">3 meses</button>
+                <button data-h="6m" class="active">6 meses</button>
+                <button data-h="1a">1 año</button>
+            </div>
+        </div>
+
+        <div class="kpis" id="simKpis"></div>
+
+        <div class="chart-card">
+            <div class="chart-title">Precio histórico y trayectorias simuladas (percentiles 10 / 50 / 90)</div>
+            <div class="chart-wrap"><canvas id="simChart"></canvas></div>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <span>Simulación estadística local, no asesoría financiera. Los resultados pasados no garantizan resultados futuros.</span>
+        <span id="lastUpdate"></span>
+    </footer>
+
+    <script src="{{ url_for('static', filename='js/simulador.js') }}"></script>
+</body>
+</html>
