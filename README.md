@@ -93,7 +93,76 @@ el instalador lo empaqueta junto al resto de la app.
 | GET | `/api/status` | Estado de la carga inicial |
 | GET | `/api/stocks` | Resumen de todas las acciones |
 | GET | `/api/stock/<ticker>?range=1m\|3m\|6m\|1y\|2y\|all` | Historia con indicadores |
+| GET | `/api/indicadores` | Último valor de UF, dólar, TPM, cobre, IPC, UTM |
+| GET | `/api/indicadores/<codigo>?limit=90` | Historial reciente de un indicador (ej. `uf`) |
+| GET | `/api/screener` | Señal COMPRAR/MANTENER/VENDER por acción, con sus métricas |
+| GET | `/api/fundamentales` | P/E, P/B, ROE, margen neto, deuda/patrimonio y sector por acción |
+| GET | `/api/fundamentales/<ticker>` | Fundamentales de una acción puntual |
 | POST | `/api/refresh?ticker=<opcional>` | Fuerza actualización desde la API |
+
+## Screener cuantitativo
+
+`screener.py` calcula, para cada acción del portafolio, sobre el último año
+bursátil:
+
+- **Sharpe ratio** (retorno anualizado menos la TPM vigente, sobre la
+  volatilidad anualizada).
+- **Beta** vs el mercado chileno, usando **ECH** (iShares MSCI Chile ETF)
+  como proxy — Yahoo Finance no tiene historia utilizable para `^IPSA`.
+- **Drawdown máximo** en el período.
+- **Retorno real**: retorno nominal menos la variación de la UF (descuenta
+  inflación).
+- **Dividend yield** (12 meses, con precedencia de la tabla oficial BCS).
+
+Con esas métricas arma un puntaje y una señal (`COMPRAR` / `MANTENER` /
+`VENDER`) con reglas duras: premia Sharpe alto y dividend yield alto, castiga
+Sharpe negativo, retorno real negativo, drawdown severo y beta alto sin
+retorno que lo respalde. Es determinístico y transparente — no hay
+proyecciones ni narrativa, solo lo ya observado.
+
+Cuando hay fundamentales disponibles (ver sección siguiente), también suman
+al puntaje: **P/E bajo** (≤12, barata en relación a sus utilidades) o
+**ROE alto** (>15%) suman; **P/E negativo o alto** (>30), **ROE bajo** (<3%)
+o **deuda/patrimonio alta** (>150, solo para empresas no financieras — el
+apalancamiento de un banco como BICE es su modelo de negocio, no una señal
+de riesgo) restan. Si un ticker no tiene fundamentales confiables, esas
+reglas simplemente no aplican — el score no penaliza por falta de dato.
+
+## Datos fundamentales (P/E, P/B, ROE, margen, deuda)
+
+**Importante:** la CMF (Comisión para el Mercado Financiero) **no tiene una
+API pública para emisores no bancarios**. Su única API abierta,
+[api.cmfchile.cl](https://api.cmfchile.cl), cubre exclusivamente bancos e
+instituciones financieras — de este portafolio, solo alcanzaría a Banco
+BICE. Para el resto (industriales, utilities, retail, holdings), los EEFF
+de la CMF solo se pueden descargar manualmente en PDF desde su portal; no
+son automatizables.
+
+Por eso `fundamentales.py` usa **yfinance** (`Ticker.info`) como fuente
+automatizable única, con un filtro de sanidad: para acciones chilenas de
+baja liquidez Yahoo Finance a veces devuelve campos con órdenes de magnitud
+absurdas (P/B > 1000, márgenes > 800%). Esos valores se descartan y se
+muestran como "no disponible" en vez de un dato engañoso. Se cachean en la
+tabla `fundamentales` con el mismo TTL que los precios.
+
+## Indicadores macroeconómicos
+
+Además de las acciones del portafolio, el servicio descarga a diario desde
+[mindicador.cl](https://mindicador.cl/api) (API pública del Banco Central,
+sin key) los siguientes indicadores, útiles como contexto para decisiones de
+inversión:
+
+| Código | Descripción |
+|---|---|
+| `uf` | Unidad de Fomento (valor diario) |
+| `dolar` | Tipo de cambio USD/CLP observado |
+| `utm` | Unidad Tributaria Mensual |
+| `ipc` | Variación mensual del IPC |
+| `tpm` | Tasa de Política Monetaria del Banco Central |
+| `libra_cobre` | Precio de la libra de cobre (USD) |
+
+Se guardan en la misma cache SQLite (tabla `indicadores`), con el mismo
+mecanismo de refresco diario que las acciones.
 
 ## Estructura
 

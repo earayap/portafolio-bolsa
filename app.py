@@ -9,6 +9,7 @@ from flask import Flask, jsonify, render_template, request
 
 import config
 import data_service
+import screener
 
 app = Flask(__name__)
 
@@ -70,6 +71,11 @@ def distribucion():
     return render_template("distribucion.html")
 
 
+@app.route("/screener")
+def screener_page():
+    return render_template("screener.html")
+
+
 @app.route("/api/status")
 def api_status():
     return jsonify({"ready": _warmup["done"], "results": _warmup["results"]})
@@ -125,6 +131,44 @@ def api_stock(ticker):
     if rng in limits:
         data["records"] = data["records"][-limits[rng]:]
     return jsonify(data)
+
+
+@app.route("/api/indicadores")
+def api_indicadores():
+    """Último valor conocido de cada indicador macro (UF, dólar, TPM, cobre...)."""
+    return jsonify(data_service.get_indicadores())
+
+
+@app.route("/api/indicadores/<codigo>")
+def api_indicador_historial(codigo):
+    """Historial reciente de un indicador macro puntual."""
+    limit = request.args.get("limit", 90, type=int)
+    return jsonify(data_service.get_indicador_historial(codigo, limit=limit))
+
+
+@app.route("/api/fundamentales")
+def api_fundamentales():
+    """Fundamentales por acción (P/E, P/B, ROE, margen, deuda/patrimonio, sector).
+
+    Fuente: yfinance sanitizado (la CMF no tiene API pública para emisores
+    no bancarios). Ver fundamentales.py."""
+    return jsonify(data_service.get_fundamentales_all())
+
+
+@app.route("/api/fundamentales/<ticker>")
+def api_fundamentales_ticker(ticker):
+    datos = data_service.get_fundamentales(ticker)
+    if not datos:
+        return jsonify({"error": "Sin datos fundamentales para esta acción"}), 404
+    return jsonify(datos)
+
+
+@app.route("/api/screener")
+def api_screener():
+    """Señal de decisión (COMPRAR/MANTENER/VENDER) por acción del portafolio,
+    basada en Sharpe, dividend yield, retorno real (ajustado por UF), beta
+    vs IPSA y drawdown máximo."""
+    return jsonify(screener.evaluate_all(list(PORTAFOLIO.keys())))
 
 
 @app.route("/api/refresh", methods=["POST"])

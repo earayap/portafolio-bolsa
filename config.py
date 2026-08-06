@@ -41,3 +41,11 @@ CACHE_TTL_HOURS = 12
 MARKET_TZ = "America/Santiago"
 DAILY_REFRESH_HOUR = 17
 DAILY_REFRESH_MINUTE = 15
+
+# Índice de referencia para calcular beta. Yahoo Finance solo tiene 1 dato
+# histórico para "^IPSA" (cobertura pobre de índices extranjeros), así que se
+# usa ECH (iShares MSCI Chile ETF, NYSE) como proxy: sigue de cerca a las
+# principales acciones del IPSA y tiene historia diaria completa.
+# Se cachea igual que cualquier ticker del portafolio, pero no se muestra
+# en el listado de posiciones.
+BENCHMARK_TICKER = "ECH"

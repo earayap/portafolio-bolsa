@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Screener · Bolsa de Santiago</title>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">
+            <div class="brand-mark">🧮</div>
+            <div class="brand-text">
+                <h1>Screener Cuantitativo</h1>
+                <span>Bolsa de Comercio de Santiago</span>
+            </div>
+        </div>
+        <nav class="topnav">
+            <a href="/">Resumen</a>
+            <a href="/distribucion">Distribución</a>
+            <a href="/screener" class="active">Screener</a>
+        </nav>
+        <div class="topbar-actions">
+            <div class="market-clock" id="clock"></div>
+            <button class="btn btn-ghost btn-icon" id="themeBtn" title="Cambiar tema">☀️</button>
+        </div>
+    </header>
+
+    <div id="loader" class="loader-overlay">
+        <div class="spinner"></div>
+        <p id="loaderText">Calculando señales…</p>
+    </div>
+
+    <main class="layout">
+        <p class="dist-intro">
+            Señal de decisión por acción, calculada solo con datos observados (sin
+            proyecciones ni narrativa): <strong>Sharpe ratio</strong> (retorno vs.
+            TPM), <strong>beta</strong> contra el mercado chileno (proxy ECH),
+            <strong>drawdown</strong> máximo, <strong>retorno real</strong>
+            (descontada la UF) y <strong>dividend yield</strong> 12 meses.
+        </p>
+
+        <div class="kpis" id="screenerKpis"></div>
+
+        <div class="screener-table-wrap">
+            <table class="screener-table">
+                <thead>
+                    <tr>
+                        <th>Acción</th>
+                        <th>Señal</th>
+                        <th>Sharpe</th>
+                        <th>Retorno anual</th>
+                        <th>Retorno real (UF)</th>
+                        <th>Volatilidad</th>
+                        <th>Beta</th>
+                        <th>Drawdown máx.</th>
+                        <th>Div. yield</th>
+                        <th>P/E</th>
+                        <th>ROE</th>
+                        <th>Motivos</th>
+                    </tr>
+                </thead>
+                <tbody id="screenerBody"></tbody>
+            </table>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <span>Señal calculada localmente (screener.py) sobre datos de Yahoo Finance, mindicador.cl y BCS. No constituye asesoría financiera regulada.</span>
+        <span id="lastUpdate"></span>
+    </footer>
+
+    <script src="{{ url_for('static', filename='js/screener.js') }}"></script>
+</body>
+</html>

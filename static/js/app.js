@@ -2,12 +2,24 @@
 
 const state = {
   stocks: [],
+  screener: {}, // ticker -> resultado del screener
+  fundamentales: {}, // ticker -> P/E, P/B, ROE, margen, deuda/patrimonio, sector
   current: null,
   range: "1y",
   priceChart: null,
   volumeChart: null,
   hide: localStorage.getItem("hideMoney") === "1", // modo discreto
 };
+
+function signalClass(senal) {
+  return { COMPRAR: "sig-buy", MANTENER: "sig-hold", VENDER: "sig-sell" }[senal] || "";
+}
+
+function signalBadge(ticker) {
+  const s = state.screener[ticker];
+  if (!s) return "";
+  return `<span class="badge badge-signal ${signalClass(s.senal)}" title="Score ${s.score}">${s.senal}</span>`;
+}
 
 const fmtCLP = (v) =>
   new Intl.NumberFormat("es-CL", { maximumFractionDigits: 2 }).format(v);
@@ -63,6 +75,17 @@ async function waitReady() {
 
 async function loadStocks() {
   state.stocks = await getJSON("/api/stocks");
+  try {
+    const rows = await getJSON("/api/screener");
+    state.screener = Object.fromEntries(rows.map((r) => [r.ticker, r]));
+  } catch (_) {
+    state.screener = {};
+  }
+  try {
+    state.fundamentales = await getJSON("/api/fundamentales");
+  } catch (_) {
+    state.fundamentales = {};
+  }
   renderKPIs();
   renderList();
   if (state.stocks.length) selectStock(state.stocks[0].ticker);
@@ -108,14 +131,22 @@ function renderKPIs() {
 /* ---------- Listado lateral ---------- */
 function renderList(filter = "") {
   const q = filter.trim().toLowerCase();
-  const items = state.stocks.filter(
-    (x) => !q || x.name.toLowerCase().includes(q) || x.ticker.toLowerCase().includes(q)
-  );
+  const items = state.stocks
+    .filter((x) => !q || x.name.toLowerCase().includes(q) || x.ticker.toLowerCase().includes(q))
+    .sort((a, b) => {
+      const sa = state.screener[a.ticker]?.score;
+      const sb = state.screener[b.ticker]?.score;
+      // Sin señal (aún no calculada) va al final, no primero.
+      if (sa == null && sb == null) return 0;
+      if (sa == null) return 1;
+      if (sb == null) return -1;
+      return sb - sa;
+    });
   document.getElementById("stockList").innerHTML = items
     .map((x) => {
       const warn = staleBadge(x);
       return `<li class="stock-item ${x.ticker === state.current ? "active" : ""}" data-ticker="${x.ticker}">
-        <div><div class="si-name">${x.name} ${warn}</div><div class="si-ticker">${x.ticker}</div></div>
+        <div><div class="si-name">${x.name} ${warn}</div><div class="si-ticker">${x.ticker} ${signalBadge(x.ticker)}</div></div>
         <div class="si-right"><div class="si-price">$${fmtCLP(x.last_close)}</div>
         <div class="si-chg ${cls(x.change_pct)}">${pct(x.change_pct)}</div></div>
       </li>`;
@@ -145,6 +176,17 @@ function renderDetail(data) {
   const srcLabel = { yfinance: "En vivo", cache: "Cache local", synthetic: "Estimado" };
   srcEl.textContent = srcLabel[data.source] || data.source;
   srcEl.dataset.src = data.source;
+
+  const sig = state.screener[data.ticker];
+  const sigEl = document.getElementById("detailSignal");
+  if (sig) {
+    sigEl.textContent = sig.senal;
+    sigEl.className = "signal " + signalClass(sig.senal);
+    sigEl.title = (sig.razones || []).join(" · ") || `Score ${sig.score}`;
+  } else {
+    sigEl.textContent = "";
+    sigEl.className = "signal";
+  }
 
   // Banner de aviso cuando el precio no está vigente o es estimado
   const warnEl = document.getElementById("detailWarn");
@@ -203,6 +245,31 @@ function renderStats(data) {
     { l: "Volumen", v: fmtInt(last.volume || 0) },
     { l: "Vol. medio", v: fmtInt(avgVol) },
   ];
+
+  const sig = state.screener[data.ticker];
+  if (sig) {
+    stats.push(
+      { l: "Sharpe (screener)", v: sig.sharpe ?? "—", cls: cls(sig.sharpe ?? 0) },
+      { l: "Beta vs mercado", v: sig.beta_vs_ipsa ?? "—" },
+      { l: "Drawdown máx.", v: sig.max_drawdown != null ? pct(sig.max_drawdown) : "—", cls: "neg" },
+      { l: "Retorno real (UF)", v: sig.retorno_real_uf != null ? pct(sig.retorno_real_uf) : "—", cls: cls(sig.retorno_real_uf ?? 0) },
+      { l: "Dividend yield", v: sig.dividend_yield != null ? sig.dividend_yield + "%" : "—" },
+    );
+  }
+
+  const f = state.fundamentales[data.ticker];
+  const nd = (v, suffix = "") => (v == null ? "—" : v.toFixed ? v.toFixed(2) + suffix : v + suffix);
+  if (f) {
+    stats.push(
+      { l: "P/E", v: nd(f.trailing_pe) },
+      { l: "P/B", v: nd(f.price_to_book) },
+      { l: "ROE", v: f.return_on_equity != null ? pct(f.return_on_equity * 100) : "—" },
+      { l: "Margen neto", v: f.profit_margin != null ? pct(f.profit_margin * 100) : "—" },
+      { l: "Deuda/Patrimonio", v: nd(f.debt_to_equity) },
+      { l: "Sector", v: f.sector || "—" },
+    );
+  }
+
   document.getElementById("statsGrid").innerHTML = stats
     .map(
       (s) => `<div class="stat"><div class="s-label">${s.l}</div>

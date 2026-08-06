@@ -95,6 +95,35 @@ def init_db():
             )
             """
         )
+        # Indicadores macro (UF, dólar, TPM, cobre, etc. — ver indicadores_macro.py)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS indicadores (
+                codigo  TEXT NOT NULL,
+                date    TEXT NOT NULL,
+                value   REAL,
+                PRIMARY KEY (codigo, date)
+            )
+            """
+        )
+        # Fundamentales por acción (ver fundamentales.py). La CMF no tiene API
+        # pública para emisores no bancarios; se usa yfinance sanitizado.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS fundamentales (
+                ticker            TEXT PRIMARY KEY,
+                updated_at        TEXT,
+                trailing_pe       REAL,
+                forward_pe        REAL,
+                price_to_book     REAL,
+                return_on_equity  REAL,
+                profit_margin     REAL,
+                debt_to_equity    REAL,
+                market_cap        REAL,
+                sector            TEXT
+            )
+            """
+        )
         conn.commit()
     log.info("Base de datos inicializada en %s", config.DB_PATH)
 
@@ -265,6 +294,11 @@ def _refresh_dividends(ticker):
         log.info("%s: %d dividendos registrados", ticker, len(recs))
 
 
+def get_dividends_per_share(ticker, since):
+    """Dividendo total por acción pagado desde `since` (inclusive)."""
+    return _dividends_per_share(ticker, since)
+
+
 def get_dividends_total(ticker, since="2025-03-01"):
     """Total de dividendos pagados por la posición desde `since` (inclusive).
 
@@ -398,6 +432,126 @@ def _synthetic_series(ticker):
 
 
 # --------------------------------------------------------------------------- #
+# Indicadores macro (UF, dólar, TPM, cobre, IPC, UTM)
+# --------------------------------------------------------------------------- #
+def _save_indicadores(por_codigo):
+    with get_conn() as conn:
+        for codigo, records in por_codigo.items():
+            if not records:
+                continue
+            conn.executemany(
+                """
+                INSERT INTO indicadores (codigo, date, value)
+                VALUES (:codigo, :date, :value)
+                ON CONFLICT(codigo, date) DO UPDATE SET value=excluded.value
+                """,
+                records,
+            )
+        conn.commit()
+
+
+def refresh_indicadores():
+    """Descarga y persiste los indicadores macro. Best-effort, nunca lanza."""
+    import indicadores_macro
+    try:
+        por_codigo = indicadores_macro.fetch_all()
+        _save_indicadores(por_codigo)
+        log.info("Indicadores macro actualizados: %s", list(por_codigo.keys()))
+    except Exception as exc:
+        log.error("Fallo al actualizar indicadores macro: %s", exc)
+
+
+def get_indicadores():
+    """Devuelve el último valor conocido de cada indicador macro."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT codigo, date, value FROM indicadores i
+            WHERE date = (SELECT MAX(date) FROM indicadores WHERE codigo = i.codigo)
+            """
+        ).fetchall()
+    return {r["codigo"]: {"date": r["date"], "value": r["value"]} for r in rows}
+
+
+def get_indicador_historial(codigo, limit=90):
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT date, value FROM indicadores WHERE codigo = ? ORDER BY date DESC LIMIT ?",
+            (codigo, limit),
+        ).fetchall()
+    return [dict(r) for r in reversed(rows)]
+
+
+# --------------------------------------------------------------------------- #
+# Fundamentales por acción (ver fundamentales.py)
+# --------------------------------------------------------------------------- #
+def _save_fundamentales(ticker, datos):
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO fundamentales
+                (ticker, updated_at, trailing_pe, forward_pe, price_to_book,
+                 return_on_equity, profit_margin, debt_to_equity, market_cap, sector)
+            VALUES
+                (:ticker, :updated_at, :trailing_pe, :forward_pe, :price_to_book,
+                 :return_on_equity, :profit_margin, :debt_to_equity, :market_cap, :sector)
+            ON CONFLICT(ticker) DO UPDATE SET
+                updated_at=excluded.updated_at, trailing_pe=excluded.trailing_pe,
+                forward_pe=excluded.forward_pe, price_to_book=excluded.price_to_book,
+                return_on_equity=excluded.return_on_equity, profit_margin=excluded.profit_margin,
+                debt_to_equity=excluded.debt_to_equity, market_cap=excluded.market_cap,
+                sector=excluded.sector
+            """,
+            {"ticker": ticker, "updated_at": datetime.utcnow().isoformat(), **datos},
+        )
+        conn.commit()
+
+
+def _fundamentales_frescos(ticker):
+    row = get_fundamentales(ticker)
+    if not row or not row.get("updated_at"):
+        return False
+    try:
+        last = datetime.fromisoformat(row["updated_at"])
+    except ValueError:
+        return False
+    return datetime.utcnow() - last < timedelta(hours=config.CACHE_TTL_HOURS)
+
+
+def refresh_fundamentales(force=False):
+    """Actualiza los fundamentales de todo el portafolio. Best-effort, nunca lanza.
+
+    Los EEFF no cambian a diario, así que se respeta el mismo TTL que la
+    cache de precios para no golpear la API de yfinance sin necesidad.
+    """
+    import fundamentales
+    for ticker in _PORTFOLIO:
+        if not force and _fundamentales_frescos(ticker):
+            continue
+        try:
+            datos = fundamentales.fetch(ticker)
+            if datos:
+                _save_fundamentales(ticker, datos)
+        except Exception as exc:
+            log.warning("No se pudieron actualizar fundamentales de %s: %s", ticker, exc)
+    log.info("Fundamentales actualizados para %d acciones", len(_PORTFOLIO))
+
+
+def get_fundamentales(ticker):
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM fundamentales WHERE ticker = ?", (ticker,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_fundamentales_all():
+    with get_conn() as conn:
+        rows = conn.execute("SELECT * FROM fundamentales").fetchall()
+    return {r["ticker"]: dict(r) for r in rows}
+
+
+# --------------------------------------------------------------------------- #
 # API pública del servicio
 # --------------------------------------------------------------------------- #
 def refresh_ticker(ticker, force=False):
@@ -445,6 +599,12 @@ def refresh_all(force=False):
         except Exception as exc:
             log.error("Error refrescando %s: %s", ticker, exc)
             results[ticker] = ("error", 0)
+    try:
+        results[config.BENCHMARK_TICKER] = refresh_ticker(config.BENCHMARK_TICKER, force=force)
+    except Exception as exc:
+        log.error("Error refrescando benchmark %s: %s", config.BENCHMARK_TICKER, exc)
+    refresh_indicadores()
+    refresh_fundamentales(force=force)
     return results
 
 
