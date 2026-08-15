@@ -576,7 +576,13 @@ def list_dividendos_todos(ticker=None):
     de la cartera, para mostrarlos juntos en /posiciones. Los de BCS vienen
     con id=None (no se pueden borrar desde la UI: viven en dividendos_bcs.py,
     no en la base de datos) y fuente="BCS"; los manuales traen su id real y
-    fuente="manual". Ordenados por fecha descendente."""
+    fuente="manual". Ordenados por fecha descendente.
+
+    Cada registro trae además "cantidad" (acciones en cartera a la fecha
+    límite/ex-dividendo — o a la fecha del registro si no hay "date_ex",
+    caso de los dividendos manuales) y "total" (amount × cantidad): cuánto
+    dinero se cobró realmente por ese pago, no solo el monto por acción.
+    Ver cantidad_al — misma lógica que get_dividends_total."""
     try:
         from dividendos_bcs import DIVIDENDOS_BCS
     except ImportError:
@@ -586,12 +592,19 @@ def list_dividendos_todos(ticker=None):
     registros = []
     for t in tickers:
         for d in DIVIDENDOS_BCS.get(t, []):
+            fecha_ref = d.get("date_ex") or d["date"]
+            cantidad = cantidad_al(t, fecha_ref)
             registros.append({
                 "id": None, "ticker": t, "date": d["date"], "amount": d["amount"],
-                "fuente": "BCS",
+                "fuente": "BCS", "cantidad": cantidad,
+                "total": round(d["amount"] * cantidad, 2),
             })
         for d in list_manual_dividends(t):
-            registros.append({**d, "ticker": t, "fuente": "manual"})
+            cantidad = cantidad_al(t, d["date"])
+            registros.append({
+                **d, "ticker": t, "fuente": "manual", "cantidad": cantidad,
+                "total": round(d["amount"] * cantidad, 2),
+            })
 
     registros.sort(key=lambda r: (r["date"], r["ticker"]), reverse=True)
     return registros

@@ -224,6 +224,8 @@ function renderDivRow(d) {
     <td><div class="st-name">${name}</div><div class="st-ticker">${d.ticker}</div></td>
     <td>${d.date}</td>
     <td>$${d.amount}</td>
+    <td>${d.cantidad}</td>
+    <td>${money(d.total)}</td>
     <td>${accion}</td>
   </tr>`;
 }
@@ -233,7 +235,7 @@ async function loadDividendos() {
   const body = document.getElementById("divBody");
   body.innerHTML = rows.length
     ? rows.map(renderDivRow).join("")
-    : `<tr><td colspan="4" class="legend-empty">Todavía no hay dividendos registrados.</td></tr>`;
+    : `<tr><td colspan="6" class="legend-empty">Todavía no hay dividendos registrados.</td></tr>`;
   body.querySelectorAll(".btn-del").forEach((btn) => {
     btn.addEventListener("click", () => deleteDividendo(btn.dataset.id));
   });
