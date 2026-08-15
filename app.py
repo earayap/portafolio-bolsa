@@ -115,6 +115,11 @@ def valor_empresa_page():
     return render_template("valor_empresa.html")
 
 
+@app.route("/eeff-graficos")
+def eeff_graficos_page():
+    return render_template("eeff_graficos.html")
+
+
 @app.route("/api/status")
 def api_status():
     return jsonify({"ready": _warmup["done"], "results": _warmup["results"]})

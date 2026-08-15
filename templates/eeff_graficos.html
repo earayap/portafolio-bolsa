@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EEFF Trimestrales · Bolsa de Santiago</title>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">
+            <div class="brand-mark">📈</div>
+            <div class="brand-text">
+                <h1>EEFF Trimestrales</h1>
+                <span>Bolsa de Comercio de Santiago</span>
+            </div>
+        </div>
+        <nav class="topnav">
+            <a href="/">Resumen</a>
+            <a href="/distribucion">Distribución</a>
+            <a href="/screener">Screener</a>
+            <a href="/valor-empresa">Valor Empresa</a>
+            <a href="/backtest">Backtest</a>
+            <a href="/simulador">Simulador</a>
+            <a href="/posiciones">Posiciones</a>
+            <a href="/eeff-graficos" class="active">EEFF Trimestrales</a>
+        </nav>
+        <div class="topbar-actions">
+            <div class="market-clock" id="clock"></div>
+            <button class="btn btn-ghost btn-icon" id="themeBtn" title="Cambiar tema">☀️</button>
+        </div>
+    </header>
+
+    <div id="loader" class="loader-overlay">
+        <div class="spinner"></div>
+        <p id="loaderText">Cargando EEFF trimestrales…</p>
+    </div>
+
+    <main class="layout">
+        <p class="dist-intro">
+            Comparación por trimestre de los EEFF ingresados a mano en
+            <a href="/posiciones">Posiciones</a> (la CMF no tiene API pública para
+            emisores no bancarios). Cada gráfico es una métrica distinta — nunca se
+            mezclan CLP, % y veces en el mismo eje. Click en una acción de la leyenda
+            para mostrarla/ocultarla en todos los gráficos a la vez.
+        </p>
+
+        <div id="eeffEmpty" class="legend-empty hidden" style="padding:40px 0;">
+            Todavía no hay EEFF trimestrales cargados. Agrégalos desde
+            <a href="/posiciones">Posiciones</a> para verlos comparados acá.
+        </div>
+
+        <div class="chip-row" id="tickerLegend"></div>
+
+        <div class="eeff-grid" id="eeffGrid"></div>
+    </main>
+
+    <footer class="footer">
+        <span>Datos ingresados a mano desde el PDF del portal CMF.</span>
+        <span id="lastUpdate"></span>
+    </footer>
+
+    <script src="{{ url_for('static', filename='js/eeff_graficos.js') }}"></script>
+</body>
+</html>
