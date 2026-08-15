@@ -25,10 +25,12 @@ else:
 DB_PATH = os.path.join(BASE_DIR, "data", "portfolio.db")
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
-# Años de historia a descargar. 4 años porque el backtest (backtest.py)
-# necesita puntos de evaluación repartidos en 3 años, cada uno mirando 1 año
-# hacia atrás para calcular sus métricas (Sharpe, volatilidad, etc.).
-HISTORY_YEARS = 4
+# Años de historia a descargar. La mayoría de las acciones del portafolio
+# tiene datos en Yahoo Finance desde el año 2000; algunas (p.ej. CGET.SN,
+# escindida de CGE en 2022) simplemente no tienen tanta historia y quedan
+# con lo que exista. 10 años deja margen de sobra para el backtest, que por
+# defecto evalúa 3 años pero acepta el parámetro ?years= para pedir más.
+HISTORY_YEARS = 10
 
 # Tiempo (en horas) que un dato en cache se considera "fresco".
 # Pasado este umbral, la app intenta actualizar desde la API.
@@ -44,6 +46,12 @@ MARKET_TZ = "America/Santiago"
 DAILY_REFRESH_HOUR = 17
 DAILY_REFRESH_MINUTE = 15
 
+# Spread máximo bid/ask (como fracción del punto medio) para confiar en
+# (bid+ask)/2 como estimación del precio actual (ver
+# data_service._fetch_live_quote). Con spreads más anchos que esto, el punto
+# medio deja de ser representativo — se cae al último precio transado.
+MAX_BID_ASK_SPREAD_PCT = 0.04
+
 # Índice de referencia para calcular beta. Yahoo Finance solo tiene 1 dato
 # histórico para "^IPSA" (cobertura pobre de índices extranjeros), así que se
 # usa ECH (iShares MSCI Chile ETF, NYSE) como proxy: sigue de cerca a las
@@ -51,3 +59,8 @@ DAILY_REFRESH_MINUTE = 15
 # Se cachea igual que cualquier ticker del portafolio, pero no se muestra
 # en el listado de posiciones.
 BENCHMARK_TICKER = "ECH"
+
+# Carpeta con los comprobantes PDF de compra/venta (Vector Capital, Itaú),
+# montada de solo lectura desde el escritorio del usuario (ver
+# docker-compose.yml). Ver comprobantes.py y data_service.recalcular_posiciones.
+COMPROBANTES_DIR = os.environ.get("COMPROBANTES_DIR", "/comprobantes")

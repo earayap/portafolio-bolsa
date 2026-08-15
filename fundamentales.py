@@ -27,6 +27,11 @@ CAMPOS_NUMERICOS = {
     "returnOnEquity": (-2, 2),
     "profitMargins": (-2, 2),
     "debtToEquity": (0, 1000),
+    # EV/EBITDA puede ser negativo (EBITDA negativo) sin ser un error de dato,
+    # a diferencia de trailingPE ese caso sí es una señal real (negocio que
+    # pierde a nivel operativo), por eso se deja un rango amplio simétrico.
+    "enterpriseToEbitda": (-300, 300),
+    "enterpriseToRevenue": (-5, 50),
 }
 
 
@@ -54,6 +59,23 @@ def fetch(ticker):
     if not info:
         return None
 
+    ev = info.get("enterpriseValue")
+    ebitda = info.get("ebitda")
+    revenue = info.get("totalRevenue")
+
+    # Para varias acciones de baja liquidez de la BCS, yfinance trae el EV, el
+    # EBITDA y los ingresos por separado pero NO el ratio precalculado
+    # (enterpriseToEbitda/enterpriseToRevenue vienen None). En vez de perder
+    # cobertura para media cartera, se calcula el ratio a mano cuando hay
+    # insumos suficientes, y pasa por el mismo filtro de sanidad.
+    ev_to_ebitda = info.get("enterpriseToEbitda")
+    if ev_to_ebitda is None and ev is not None and ebitda:
+        ev_to_ebitda = ev / ebitda
+
+    ev_to_revenue = info.get("enterpriseToRevenue")
+    if ev_to_revenue is None and ev is not None and revenue:
+        ev_to_revenue = ev / revenue
+
     return {
         "trailing_pe": _sane("trailingPE", info.get("trailingPE")),
         "forward_pe": _sane("forwardPE", info.get("forwardPE")),
@@ -63,4 +85,12 @@ def fetch(ticker):
         "debt_to_equity": _sane("debtToEquity", info.get("debtToEquity")),
         "market_cap": info.get("marketCap"),
         "sector": info.get("sector"),
+        # Valor de Empresa (EV) — a diferencia del P/E, descuenta la deuda
+        # neta de cada empresa, así que compara negocios con distinta
+        # estructura de capital de forma más justa. Ver valor_empresa.py.
+        "enterprise_value": ev,
+        "ev_to_ebitda": _sane("enterpriseToEbitda", ev_to_ebitda),
+        "ev_to_revenue": _sane("enterpriseToRevenue", ev_to_revenue),
+        "ebitda": ebitda,
+        "total_revenue": revenue,
     }

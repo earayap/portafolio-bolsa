@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Posiciones · Bolsa de Santiago</title>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">
+            <div class="brand-mark">✏️</div>
+            <div class="brand-text">
+                <h1>Mis Posiciones</h1>
+                <span>Bolsa de Comercio de Santiago</span>
+            </div>
+        </div>
+        <nav class="topnav">
+            <a href="/">Resumen</a>
+            <a href="/distribucion">Distribución</a>
+            <a href="/screener">Screener</a>
+            <a href="/valor-empresa">Valor Empresa</a>
+            <a href="/backtest">Backtest</a>
+            <a href="/simulador">Simulador</a>
+            <a href="/posiciones" class="active">Posiciones</a>
+        </nav>
+        <div class="topbar-actions">
+            <div class="market-clock" id="clock"></div>
+            <button class="btn btn-ghost btn-icon" id="themeBtn" title="Cambiar tema">☀️</button>
+        </div>
+    </header>
+
+    <div id="loader" class="loader-overlay">
+        <div class="spinner"></div>
+        <p id="loaderText">Cargando posiciones…</p>
+    </div>
+
+    <main class="layout">
+        <p class="dist-intro">
+            Cantidad real de acciones y precio de compra promedio por posición, y
+            dividendos reales pagados que vas registrando a mano. Estos datos
+            alimentan directamente el resumen, la distribución y el screener —
+            se guardan de inmediato al confirmar cada fila.
+        </p>
+
+        <section class="pos-card">
+            <div class="pie-head">
+                <h2>Posiciones</h2>
+            </div>
+            <div class="screener-table-wrap">
+                <table class="screener-table" id="posTable">
+                    <thead>
+                        <tr>
+                            <th>Acción</th>
+                            <th>Cantidad</th>
+                            <th>Precio de compra (CLP)</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="posBody"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="pos-card">
+            <div class="pie-head">
+                <h2>Operaciones (comprobantes)</h2>
+            </div>
+            <p class="dist-intro">
+                Compras y ventas importadas automáticamente de los comprobantes PDF
+                de Vector Capital e Itaú (carpeta montada de solo lectura). "Sincronizar"
+                lee los PDF nuevos y los agrega al historial de abajo — no toca las
+                posiciones. "Recalcular posiciones" compara la cantidad/precio de compra
+                promedio que resulta de todo el historial contra lo que hay hoy en
+                <em>Posiciones</em>, y deja elegir qué aplicar.
+            </p>
+
+            <div class="div-form">
+                <button type="button" class="btn" id="syncBtn">Sincronizar comprobantes</button>
+                <button type="button" class="btn btn-ghost" id="recalcBtn">Recalcular posiciones</button>
+            </div>
+            <p id="syncStatus" class="div-error"></p>
+
+            <div id="recalcPanel" class="hidden">
+                <div class="screener-table-wrap">
+                    <table class="screener-table" id="recalcTable">
+                        <thead>
+                            <tr>
+                                <th></th>
+                                <th>Acción</th>
+                                <th>Cantidad actual</th>
+                                <th>Cantidad calculada</th>
+                                <th>Precio actual</th>
+                                <th>Precio calculado</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recalcBody"></tbody>
+                    </table>
+                </div>
+                <div class="div-form">
+                    <button type="button" class="btn" id="recalcApplyBtn">Aplicar seleccionados</button>
+                </div>
+                <p id="recalcStatus" class="div-error"></p>
+            </div>
+
+            <div class="screener-table-wrap">
+                <table class="screener-table" id="operacionesTable">
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Tipo</th>
+                            <th>Acción</th>
+                            <th>Cantidad</th>
+                            <th>Precio unitario</th>
+                            <th>Monto</th>
+                            <th>Institución</th>
+                            <th>Comprobante</th>
+                        </tr>
+                    </thead>
+                    <tbody id="operacionesBody"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="pos-card">
+            <div class="pie-head">
+                <h2>Aportes a la corredora</h2>
+            </div>
+            <p class="dist-intro">
+                Depósitos de caja a la cuenta de inversión (no por acción). Sirven
+                para comparar cuánto capital has puesto en total contra el valor de
+                mercado actual de la cartera — un retorno real simple, sin ponderar
+                por fecha de cada aporte.
+            </p>
+
+            <form id="aporteForm" class="div-form">
+                <input type="date" id="aporteDate" required>
+                <input type="number" id="aporteAmount" step="0.01" min="0.01" placeholder="Monto (CLP)" required>
+                <button type="submit" class="btn">Agregar</button>
+            </form>
+            <p id="aporteError" class="div-error"></p>
+
+            <div class="screener-table-wrap">
+                <table class="screener-table" id="aporteTable">
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Monto (CLP)</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="aporteBody"></tbody>
+                </table>
+            </div>
+            <p class="dist-intro" id="aporteTotal"></p>
+        </section>
+
+        <section class="pos-card">
+            <div class="pie-head">
+                <h2>Dividendos reales</h2>
+            </div>
+
+            <form id="divForm" class="div-form">
+                <select id="divTicker" required>
+                    {% for ticker, info in portfolio.items() %}
+                    <option value="{{ ticker }}">{{ info.nombre }} ({{ ticker }})</option>
+                    {% endfor %}
+                </select>
+                <input type="date" id="divDate" required>
+                <input type="number" id="divAmount" step="0.01" min="0.01" placeholder="$ por acción" required>
+                <button type="submit" class="btn">Agregar</button>
+            </form>
+            <p id="divError" class="div-error"></p>
+
+            <div class="screener-table-wrap">
+                <table class="screener-table" id="divTable">
+                    <thead>
+                        <tr>
+                            <th>Acción</th>
+                            <th>Fecha de pago</th>
+                            <th>Monto por acción (CLP)</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="divBody"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="pos-card">
+            <div class="pie-head">
+                <h2>EEFF trimestrales</h2>
+            </div>
+            <p class="dist-intro">
+                La CMF no tiene API pública para EEFF de emisores no bancarios; estos
+                datos se transcriben a mano desde el PDF del portal CMF, por año y
+                trimestre. Los primeros 5 campos son solo histórico de referencia — no
+                alimentan el score del screener. Los últimos 4 (resultado operacional,
+                D&amp;A, deuda financiera, efectivo) sí se usan: alimentan
+                <a href="/valor-empresa">Valor Empresa</a> cuando Yahoo Finance no trae
+                el EV/EBITDA o EV/Ventas de un ticker (pasa seguido con acciones
+                ilíquidas de la BCS).
+            </p>
+
+            <form id="eeffForm" class="div-form">
+                <select id="eeffTicker" required>
+                    {% for ticker, info in portfolio.items() %}
+                    <option value="{{ ticker }}">{{ info.nombre }} ({{ ticker }})</option>
+                    {% endfor %}
+                </select>
+                <input type="number" id="eeffAnio" min="2000" max="2100" step="1" placeholder="Año" required>
+                <select id="eeffTrimestre" required>
+                    <option value="1">Q1</option>
+                    <option value="2">Q2</option>
+                    <option value="3">Q3</option>
+                    <option value="4">Q4</option>
+                </select>
+                <input type="number" id="eeffIngresos" step="0.01" placeholder="Ingresos (MM CLP)">
+                <input type="number" id="eeffUtilidad" step="0.01" placeholder="Utilidad neta (MM CLP)">
+                <input type="number" id="eeffRoe" step="0.01" placeholder="ROE (%)">
+                <input type="number" id="eeffDeuda" step="0.01" placeholder="Deuda/patrimonio">
+                <input type="number" id="eeffMargen" step="0.01" placeholder="Margen neto (%)">
+                <input type="number" id="eeffResultOp" step="0.01" placeholder="Resultado operacional (MM CLP)" title="Estado de Resultados — línea 'Resultado Operacional'">
+                <input type="number" id="eeffDepAmort" step="0.01" placeholder="Depreciación y amortización (MM CLP)" title="Estado de Flujo de Efectivo — ajuste por D&amp;A en actividades de la operación">
+                <input type="number" id="eeffDeudaFin" step="0.01" placeholder="Deuda financiera CP+LP (MM CLP)" title="Balance — 'Otros pasivos financieros' corrientes + no corrientes, sumados">
+                <input type="number" id="eeffEfectivo" step="0.01" placeholder="Efectivo y equivalentes (MM CLP)" title="Balance — primera línea de Activos Corrientes">
+                <button type="submit" class="btn">Guardar</button>
+            </form>
+            <p id="eeffError" class="div-error"></p>
+
+            <div class="screener-table-wrap">
+                <table class="screener-table" id="eeffTable">
+                    <thead>
+                        <tr>
+                            <th>Acción</th>
+                            <th>Año</th>
+                            <th>Q</th>
+                            <th>Ingresos (MM CLP)</th>
+                            <th>Utilidad neta (MM CLP)</th>
+                            <th>ROE (%)</th>
+                            <th>Deuda/patrimonio</th>
+                            <th>Margen neto (%)</th>
+                            <th title="Estado de Resultados">Result. operacional (MM CLP)</th>
+                            <th title="Estado de Flujo de Efectivo">D&amp;A (MM CLP)</th>
+                            <th title="Balance: pasivos financieros CP+LP">Deuda financiera (MM CLP)</th>
+                            <th title="Balance: activos corrientes">Efectivo (MM CLP)</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="eeffBody"></tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <span>Datos ingresados a mano; tienen precedencia sobre el historial de Yahoo Finance.</span>
+        <span id="lastUpdate"></span>
+    </footer>
+
+    <script>window.PORTFOLIO = {{ portfolio | tojson }};</script>
+    <script src="{{ url_for('static', filename='js/posiciones.js') }}"></script>
+</body>
+</html>

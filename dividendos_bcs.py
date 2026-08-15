@@ -3,9 +3,18 @@
 Fuente: https://www.bolsadesantiago.com/dividendos/<NEMOTECNICO>
 (el nemotécnico es el ticker sin el sufijo ".SN").
 
-Se registran los dividendos por su FECHA DE PAGO y el monto declarado por acción
-(campo "Evento", que trae el valor exacto en pesos chilenos; el campo "Pago por
-Acción" del sitio viene redondeado a enteros y NO se usa).
+Se registran los dividendos por su FECHA DE PAGO ("date") y el monto declarado
+por acción (campo "Evento", que trae el valor exacto en pesos chilenos; el
+campo "Pago por Acción" del sitio viene redondeado a enteros y NO se usa).
+
+Cada registro trae además "date_ex" (columna "Fecha límite" del sitio — el
+corte de derecho a dividendo, comúnmente llamada fecha ex-dividendo): hay que
+tener las acciones compradas ANTES de esa fecha para cobrar el dividendo,
+independiente de cuántas acciones se tengan para cuando se paga. data_service
+usa "date_ex" (no "date") para calcular cuántas acciones había en cartera en
+ese momento (ver data_service.cantidad_al) — usar la fecha de pago ahí
+sobrestima sistemáticamente el monto, porque cuenta compras hechas después
+del corte que en la realidad no alcanzaron a cobrar ese dividendo.
 
 Esta tabla tiene PRECEDENCIA sobre los dividendos de Yahoo Finance, porque para
 las acciones chilenas el dato oficial de la BCS es más completo y confiable.
@@ -15,75 +24,102 @@ Notas:
   servicio sólo suma los que ya fueron pagados (date <= hoy), de modo que se
   contabilizan automáticamente al llegar su fecha.
 - CFMITNIPSA es un fondo de inversión con repartos frecuentes y fraccionarios;
-  se listan agrupados por fecha de pago.
+  se listan agrupados por fecha de pago. Su fecha límite es sistemáticamente
+  1 día calendario antes del pago (patrón confirmado en 15+ repartos
+  consecutivos del sitio de la BCS) — se aplica esa regla en vez de revisar
+  cada uno a mano.
 
-Formato: ticker (con .SN) -> lista de {"date": "YYYY-MM-DD", "amount": CLP_por_accion}
-Datos recolectados el 2026-07-28.
+Formato: ticker (con .SN) -> lista de {"date": "YYYY-MM-DD" (pago),
+"date_ex": "YYYY-MM-DD" (fecha límite / ex-dividendo), "amount": CLP_por_accion}
+
+Datos recolectados el 2026-07-28; fechas ex-dividendo y dividendos declarados
+después de esa fecha (PROVIDA 2026-08-06) agregados el 2026-08-15.
 """
+
+
+def _cfmitnipsa_ex(fecha_pago):
+    """Fecha límite = fecha de pago - 1 día calendario (ver nota arriba)."""
+    from datetime import date, timedelta
+    y, m, d = (int(x) for x in fecha_pago.split("-"))
+    return (date(y, m, d) - timedelta(days=1)).isoformat()
+
 
 DIVIDENDOS_BCS = {
     # Banco BICE (BICECORP)
     "BICE.SN": [
-        {"date": "2026-05-14", "amount": 6},
-        {"date": "2026-05-14", "amount": 4},
+        {"date": "2026-05-14", "date_ex": "2026-05-08", "amount": 6},
+        {"date": "2026-05-14", "date_ex": "2026-05-08", "amount": 4},
     ],
     # CGE Distribución
     "CGET.SN": [
-        {"date": "2026-05-11", "amount": 9},
+        {"date": "2026-05-11", "date_ex": "2026-05-05", "amount": 9},
     ],
     # Engie Energía Chile
     "ECL.SN": [
-        {"date": "2026-05-27", "amount": 58},
+        {"date": "2026-05-27", "date_ex": "2026-05-20", "amount": 58},
     ],
     # Coca-Cola Embonor B
     "EMBONOR-B.SN": [
-        {"date": "2026-05-19", "amount": 14},
-        {"date": "2026-05-19", "amount": 53},
+        {"date": "2026-05-19", "date_ex": "2026-05-13", "amount": 14},
+        {"date": "2026-05-19", "date_ex": "2026-05-13", "amount": 53},
     ],
     # Energía Latina S.A. (Enlasa)
     "ENLASA.SN": [
-        {"date": "2026-05-13", "amount": 26},
-        {"date": "2026-05-13", "amount": 56},
+        {"date": "2026-05-13", "date_ex": "2026-05-07", "amount": 26},
+        {"date": "2026-05-13", "date_ex": "2026-05-07", "amount": 56},
     ],
     # Puerto Froward
     "FROWARD.SN": [
-        {"date": "2026-04-24", "amount": 48},
+        {"date": "2026-04-24", "date_ex": "2026-04-18", "amount": 48},
     ],
     # Empresas Lipigas S.A.
     "LIPIGAS.SN": [
-        {"date": "2026-03-31", "amount": 95},
-        {"date": "2026-05-07", "amount": 118},
-        {"date": "2026-06-22", "amount": 95},
+        {"date": "2026-03-31", "date_ex": "2026-03-25", "amount": 95},
+        {"date": "2026-05-07", "date_ex": "2026-04-30", "amount": 118},
+        {"date": "2026-06-22", "date_ex": "2026-06-16", "amount": 95},
     ],
     # Minera Valparaíso
     "MINERA.SN": [
-        {"date": "2026-05-18", "amount": 321},
+        {"date": "2026-05-18", "date_ex": "2026-05-12", "amount": 321},
     ],
     # Navarino
     "NAVARINO.SN": [
-        {"date": "2026-05-07", "amount": 85},
+        {"date": "2026-05-07", "date_ex": "2026-04-30", "amount": 85},
     ],
     # Empresa Eléctrica Pehuenche
     "PEHUENCHE.SN": [
-        {"date": "2026-05-15", "amount": 75},
+        {"date": "2026-05-15", "date_ex": "2026-05-09", "amount": 75},
     ],
     # Quiñenco S.A.
     "QUINENCO.SN": [
-        {"date": "2026-05-15", "amount": 63},
-        {"date": "2026-05-15", "amount": 286},
+        {"date": "2026-05-15", "date_ex": "2026-05-09", "amount": 63},
+        {"date": "2026-05-15", "date_ex": "2026-05-09", "amount": 286},
     ],
     # Inversiones Tricahue
     "TRICAHUE.SN": [
-        {"date": "2026-05-22", "amount": 39},
+        {"date": "2026-05-22", "date_ex": "2026-05-15", "amount": 39},
     ],
     # AFP Provida
     "PROVIDA.SN": [
-        {"date": "2026-05-28", "amount": 153},
+        {"date": "2026-05-28", "date_ex": "2026-05-22", "amount": 153},
+        {"date": "2026-08-06", "date_ex": "2026-07-31", "amount": 55},
     ],
     # Zofri S.A. (el 2026-11-27 está declarado pero aún no pagado)
     "ZOFRI.SN": [
-        {"date": "2026-05-22", "amount": 36.19},
-        {"date": "2026-11-27", "amount": 36.19},
+        {"date": "2026-05-22", "date_ex": "2026-05-15", "amount": 36.19},
+        {"date": "2026-11-27", "date_ex": "2026-11-21", "amount": 36.19},
+    ],
+    # Schwager S.A.
+    "SCHWAGER.SN": [
+        {"date": "2026-05-29", "date_ex": "2026-05-23", "amount": 0.066},
+    ],
+    # Soquimich Comercial S.A.
+    "SOQUICOM.SN": [
+        {"date": "2026-05-15", "date_ex": "2026-05-09", "amount": 25.23},
+    ],
+    # SQM-B
+    "SQM-B.SN": [
+        {"date": "2026-05-14", "date_ex": "2026-05-08", "amount": 917.19},
     ],
     # CFI IT Nipsa (fondo de inversión; repartos frecuentes agrupados por fecha)
     "CFMITNIPSA.SN": [
@@ -106,3 +142,6 @@ DIVIDENDOS_BCS = {
         {"date": "2026-06-04", "amount": 1.74},
     ],
 }
+
+for _evento in DIVIDENDOS_BCS["CFMITNIPSA.SN"]:
+    _evento["date_ex"] = _cfmitnipsa_ex(_evento["date"])

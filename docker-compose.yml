@@ -7,6 +7,14 @@ services:
     volumes:
       # Persiste la cache SQLite entre reinicios del contenedor
       - ./data:/app/data
+      # portfolio.json (cantidad/precio_compra por ticker) — sin este mount
+      # quedaba "horneado" en la imagen: los cambios guardados desde
+      # /posiciones (o /api/posiciones/recalculo_aplicar) se escribían en la
+      # capa escribible del contenedor y se perdían en el próximo rebuild.
+      - ./portfolio.json:/app/portfolio.json
+      # Comprobantes PDF de compra/venta (Vector Capital, Itaú) — solo
+      # lectura, la app nunca escribe ahí. Ver comprobantes.py.
+      - "C:/Users/earay/OneDrive/Desktop/comprobantes:/comprobantes:ro"
     environment:
       - PORT=8000
     restart: unless-stopped

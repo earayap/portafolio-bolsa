@@ -1,0 +1,169 @@
+====================================================================
+ PORTAFOLIO BURSATIL - BOLSA DE COMERCIO DE SANTIAGO
+ Guia de instalacion paso a paso
+ Repositorio: https://github.com/earayap/portafolio-bolsa
+====================================================================
+
+Existen 3 formas de instalar y correr la aplicacion. Elige la que
+mas te acomode:
+
+  OPCION A - Docker (recomendada, mas simple y estable)
+  OPCION B - Python local (para desarrollar o modificar el codigo)
+  OPCION C - App de escritorio .exe (Windows, sin instalar nada)
+
+En cualquiera de las 3 opciones, el primer paso es el mismo:
+configurar tu propio portafolio (paso 0).
+
+
+--------------------------------------------------------------------
+PASO 0 - Descargar el proyecto y configurar tu portafolio
+--------------------------------------------------------------------
+
+1. Descarga el proyecto:
+
+   git clone https://github.com/earayap/portafolio-bolsa.git
+   cd portafolio-bolsa
+
+   (Si no tienes git instalado, tambien puedes bajar el ZIP desde
+   la pagina del repositorio con el boton "Code > Download ZIP" y
+   descomprimirlo).
+
+2. Copia el archivo de ejemplo y crea tu propio portafolio:
+
+   copy portfolio.example.json portfolio.json      (Windows CMD)
+   cp portfolio.example.json portfolio.json         (PowerShell/Git Bash)
+
+3. Abre "portfolio.json" con cualquier editor de texto y reemplaza
+   los datos de ejemplo por tus propias acciones, cantidades y
+   precio de compra promedio. Formato:
+
+   {
+     "QUINENCO.SN": {"nombre": "Quinenco S.A.", "cantidad": 100, "precio_compra": 4000.00}
+   }
+
+   El ticker debe ser el simbolo oficial de Yahoo Finance / Bolsa de
+   Santiago (con sufijo ".SN"). Este archivo queda SOLO en tu
+   computador, nunca se sube a GitHub (esta en .gitignore).
+
+
+--------------------------------------------------------------------
+OPCION A - Instalar con Docker (recomendada)
+--------------------------------------------------------------------
+
+Requisitos: tener Docker Desktop instalado.
+(https://www.docker.com/products/docker-desktop/)
+
+1. Desde la carpeta del proyecto, ejecuta:
+
+   docker compose up --build
+
+2. Espera a que termine de construir la imagen (la primera vez tarda
+   unos minutos).
+
+3. Abre el navegador en:
+
+   http://localhost:8000
+
+4. Para detenerla: Ctrl+C en la terminal, o "docker compose down".
+
+5. Para volver a levantarla despues (mas rapido, ya esta construida):
+
+   docker compose up
+
+
+--------------------------------------------------------------------
+OPCION B - Instalar con Python (modo desarrollo)
+--------------------------------------------------------------------
+
+Requisitos: Python 3.11 o superior instalado.
+(https://www.python.org/downloads/)
+
+1. Desde la carpeta del proyecto, crea un entorno virtual:
+
+   python -m venv .venv
+
+2. Activa el entorno virtual:
+
+   Windows (CMD/PowerShell):   .venv\Scripts\activate
+   Linux/Mac/Git Bash:         source .venv/bin/activate
+
+3. Instala las dependencias:
+
+   pip install -r requirements.txt
+
+4. Ejecuta la aplicacion:
+
+   python app.py
+
+5. Abre el navegador en:
+
+   http://localhost:8000
+
+6. Para detenerla: Ctrl+C en la terminal.
+
+
+--------------------------------------------------------------------
+OPCION C - App de escritorio (.exe para Windows)
+--------------------------------------------------------------------
+
+No requiere tener Python ni Docker instalados en la maquina final.
+
+Si ya tienes el ejecutable (carpeta "dist/PortafolioBolsa"):
+
+1. Copia toda la carpeta "PortafolioBolsa" a donde quieras (ej.
+   Escritorio o Archivos de programa).
+
+2. Asegurate de que tu "portfolio.json" (ver Paso 0) este dentro de
+   esa carpeta, junto a "PortafolioBolsa.exe". Si no lo copias, la
+   app crea uno automaticamente con datos de ejemplo la primera vez
+   que se abre.
+
+3. Haz doble clic en "PortafolioBolsa.exe".
+
+4. Se abrira automaticamente tu navegador en http://127.0.0.1:8000
+
+5. Para cerrarla: cierra la ventana negra de la consola (o el
+   proceso "PortafolioBolsa.exe" desde el Administrador de tareas).
+
+Si NO tienes el ejecutable y quieres generarlo tu mismo desde el
+codigo fuente:
+
+1. Sigue los pasos 1-3 de la OPCION B (crear y activar entorno
+   virtual, instalar requirements.txt).
+
+2. Instala PyInstaller:
+
+   pip install pyinstaller
+
+3. Genera el ejecutable:
+
+   pyinstaller build_exe.spec
+
+4. El resultado queda en:
+
+   dist\PortafolioBolsa\PortafolioBolsa.exe
+
+5. Copia tu "portfolio.json" real a esa carpeta "dist\PortafolioBolsa"
+   antes de compartir o mover la app (no se genera solo si ya existe
+   uno en la carpeta del proyecto).
+
+
+--------------------------------------------------------------------
+PREGUNTAS FRECUENTES
+--------------------------------------------------------------------
+
+- La app se ve pero los datos no cargan / dice "Estimado":
+  Puede ser que Yahoo Finance no responda momentaneamente para ese
+  ticker. La app usa datos en cache o una serie estimada mientras
+  tanto, y reintenta solo.
+
+- Quiero agregar mas acciones despues:
+  Simplemente edita tu "portfolio.json" y vuelve a iniciar la app.
+
+- Quiero compartir mejoras con la comunidad:
+  Haz un fork del repositorio, crea una rama con tus cambios y abre
+  un Pull Request en https://github.com/earayap/portafolio-bolsa
+  Revisa antes que tu "portfolio.json" real NO quede incluido en el
+  commit (git status no deberia mostrarlo).
+
+====================================================================

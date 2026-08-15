@@ -13,6 +13,8 @@ import data_service
 import screener
 import backtest
 import simulador
+import valor_empresa
+import comprobantes
 
 app = Flask(__name__)
 
@@ -49,6 +51,16 @@ PORTAFOLIO = _load_portfolio()
 
 # Inyecta el portafolio en el servicio de datos.
 data_service.set_portfolio(PORTAFOLIO)
+
+_portfolio_lock = threading.Lock()
+
+
+def _save_portfolio():
+    """Persiste PORTAFOLIO en portfolio.json (fuente única de verdad)."""
+    path = os.path.join(config.BASE_DIR, "portfolio.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(PORTAFOLIO, f, ensure_ascii=False, indent=2)
+        f.write("\n")
 
 # Estado de la carga inicial en segundo plano
 _warmup = {"done": False, "results": {}}
@@ -91,6 +103,16 @@ def backtest_page():
 @app.route("/simulador")
 def simulador_page():
     return render_template("simulador.html", portfolio=PORTAFOLIO)
+
+
+@app.route("/posiciones")
+def posiciones_page():
+    return render_template("posiciones.html", portfolio=PORTAFOLIO)
+
+
+@app.route("/valor-empresa")
+def valor_empresa_page():
+    return render_template("valor_empresa.html")
 
 
 @app.route("/api/status")
@@ -188,6 +210,14 @@ def api_screener():
     return jsonify(screener.evaluate_all(list(PORTAFOLIO.keys())))
 
 
+@app.route("/api/valor-empresa")
+def api_valor_empresa():
+    """Clasificación BARATA/NEUTRAL/CARA por Valor de Empresa (EV/EBITDA,
+    EV/Ventas) — a diferencia del /api/screener, es una lectura de
+    valoración pura, sin mezclar riesgo/retorno. Ver valor_empresa.py."""
+    return jsonify(valor_empresa.evaluate_all(list(PORTAFOLIO.keys())))
+
+
 @app.route("/api/backtest")
 def api_backtest():
     """Backtest de la señal del screener: retorno futuro realizado (6 meses)
@@ -222,6 +252,278 @@ def api_refresh():
         return jsonify({"ticker": ticker, "source": src, "rows": n})
     results = data_service.refresh_all(force=True)
     return jsonify(results)
+
+
+@app.route("/api/posiciones/<ticker>", methods=["POST"])
+def api_actualizar_posicion(ticker):
+    """Actualiza la cantidad real de acciones y/o el precio de compra
+    promedio de una posición, y lo persiste en portfolio.json."""
+    if ticker not in PORTAFOLIO:
+        return jsonify({"error": "Acción no encontrada"}), 404
+
+    body = request.get_json(silent=True) or {}
+
+    cantidad = body.get("cantidad")
+    precio_compra = body.get("precio_compra")
+
+    if cantidad is not None:
+        try:
+            cantidad = int(cantidad)
+        except (TypeError, ValueError):
+            return jsonify({"error": "cantidad debe ser un entero"}), 400
+        if cantidad < 0:
+            return jsonify({"error": "cantidad no puede ser negativa"}), 400
+
+    if precio_compra is not None:
+        try:
+            precio_compra = float(precio_compra)
+        except (TypeError, ValueError):
+            return jsonify({"error": "precio_compra debe ser un número"}), 400
+        if precio_compra < 0:
+            return jsonify({"error": "precio_compra no puede ser negativo"}), 400
+
+    with _portfolio_lock:
+        if cantidad is not None:
+            PORTAFOLIO[ticker]["cantidad"] = cantidad
+        if precio_compra is not None:
+            PORTAFOLIO[ticker]["precio_compra"] = precio_compra
+        _save_portfolio()
+
+    return jsonify(data_service.get_summary(ticker) or {"ok": True})
+
+
+@app.route("/api/dividendos_manuales")
+def api_dividendos_manuales():
+    """Lista los dividendos ingresados a mano, opcionalmente filtrados por
+    ticker (?ticker=XXX.SN)."""
+    ticker = request.args.get("ticker")
+    if ticker and ticker not in PORTAFOLIO:
+        return jsonify({"error": "Acción no encontrada"}), 404
+    return jsonify(data_service.list_manual_dividends(ticker))
+
+
+@app.route("/api/dividendos")
+def api_dividendos_todos():
+    """Todos los dividendos "conocidos" de la cartera: los oficiales de la
+    BCS (dividendos_bcs.py, no editables desde acá) más los ingresados a
+    mano en /posiciones. Para mostrarlos juntos en la UI; el CRUD real
+    sigue siendo por /api/dividendos_manuales."""
+    ticker = request.args.get("ticker")
+    if ticker and ticker not in PORTAFOLIO:
+        return jsonify({"error": "Acción no encontrada"}), 404
+    return jsonify(data_service.list_dividendos_todos(ticker))
+
+
+@app.route("/api/dividendos_manuales", methods=["POST"])
+def api_crear_dividendo_manual():
+    """Registra un dividendo real pagado (fecha + monto por acción)."""
+    body = request.get_json(silent=True) or {}
+    ticker = body.get("ticker")
+    date = body.get("date")
+    amount = body.get("amount")
+
+    if ticker not in PORTAFOLIO:
+        return jsonify({"error": "Acción no encontrada"}), 404
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except (TypeError, ValueError):
+        return jsonify({"error": "date debe tener formato YYYY-MM-DD"}), 400
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError):
+        return jsonify({"error": "amount debe ser un número"}), 400
+    if amount <= 0:
+        return jsonify({"error": "amount debe ser mayor que 0"}), 400
+
+    new_id = data_service.add_manual_dividend(ticker, date, amount)
+    return jsonify({"id": new_id, "ticker": ticker, "date": date, "amount": amount}), 201
+
+
+@app.route("/api/dividendos_manuales/<int:dividend_id>", methods=["DELETE"])
+def api_borrar_dividendo_manual(dividend_id):
+    ok = data_service.delete_manual_dividend(dividend_id)
+    if not ok:
+        return jsonify({"error": "Dividendo no encontrado"}), 404
+    return jsonify({"ok": True})
+
+
+@app.route("/api/aportes")
+def api_aportes():
+    """Lista los aportes (depósitos) a la corredora ingresados a mano."""
+    return jsonify(data_service.list_aportes())
+
+
+@app.route("/api/aportes", methods=["POST"])
+def api_crear_aporte():
+    """Registra un depósito real a la cuenta de inversión (fecha + monto)."""
+    body = request.get_json(silent=True) or {}
+    date = body.get("date")
+    amount = body.get("amount")
+
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except (TypeError, ValueError):
+        return jsonify({"error": "date debe tener formato YYYY-MM-DD"}), 400
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError):
+        return jsonify({"error": "amount debe ser un número"}), 400
+    if amount <= 0:
+        return jsonify({"error": "amount debe ser mayor que 0"}), 400
+
+    new_id = data_service.add_aporte(date, amount)
+    return jsonify({"id": new_id, "date": date, "amount": amount}), 201
+
+
+@app.route("/api/aportes/<int:aporte_id>", methods=["DELETE"])
+def api_borrar_aporte(aporte_id):
+    ok = data_service.delete_aporte(aporte_id)
+    if not ok:
+        return jsonify({"error": "Aporte no encontrado"}), 404
+    return jsonify({"ok": True})
+
+
+def _num_opcional(body, campo):
+    """Convierte un campo opcional a float, o None si viene vacío/ausente.
+    Lanza ValueError si viene con un valor no numérico."""
+    v = body.get(campo)
+    if v is None or v == "":
+        return None
+    return float(v)
+
+
+@app.route("/api/eeff_trimestral")
+def api_eeff_trimestral():
+    """Lista los EEFF trimestrales ingresados a mano, opcionalmente
+    filtrados por ticker (?ticker=XXX.SN)."""
+    ticker = request.args.get("ticker")
+    if ticker and ticker not in PORTAFOLIO:
+        return jsonify({"error": "Acción no encontrada"}), 404
+    return jsonify(data_service.list_eeff_trimestral(ticker))
+
+
+@app.route("/api/eeff_trimestral", methods=["POST"])
+def api_crear_eeff_trimestral():
+    """Crea o actualiza (por ticker+año+trimestre) un registro de EEFF
+    trimestral transcrito a mano desde el PDF del portal CMF."""
+    body = request.get_json(silent=True) or {}
+    ticker = body.get("ticker")
+    if ticker not in PORTAFOLIO:
+        return jsonify({"error": "Acción no encontrada"}), 404
+
+    try:
+        anio = int(body.get("anio"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "anio debe ser un entero"}), 400
+    if anio < 2000 or anio > datetime.utcnow().year + 1:
+        return jsonify({"error": "anio fuera de rango"}), 400
+
+    try:
+        trimestre = int(body.get("trimestre"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "trimestre debe ser un entero"}), 400
+    if trimestre not in (1, 2, 3, 4):
+        return jsonify({"error": "trimestre debe ser 1, 2, 3 o 4"}), 400
+
+    try:
+        ingresos = _num_opcional(body, "ingresos")
+        utilidad_neta = _num_opcional(body, "utilidad_neta")
+        roe = _num_opcional(body, "roe")
+        deuda_patrimonio = _num_opcional(body, "deuda_patrimonio")
+        margen_neto = _num_opcional(body, "margen_neto")
+        resultado_operacional = _num_opcional(body, "resultado_operacional")
+        depreciacion_amortizacion = _num_opcional(body, "depreciacion_amortizacion")
+        deuda_financiera = _num_opcional(body, "deuda_financiera")
+        efectivo_equivalentes = _num_opcional(body, "efectivo_equivalentes")
+    except ValueError:
+        return jsonify({"error": "los campos numéricos deben ser números"}), 400
+
+    new_id = data_service.upsert_eeff_trimestral(
+        ticker, anio, trimestre, ingresos, utilidad_neta, roe,
+        deuda_patrimonio, margen_neto, resultado_operacional,
+        depreciacion_amortizacion, deuda_financiera, efectivo_equivalentes,
+    )
+    return jsonify({"id": new_id, "ticker": ticker, "anio": anio, "trimestre": trimestre}), 201
+
+
+@app.route("/api/eeff_trimestral/<int:eeff_id>", methods=["DELETE"])
+def api_borrar_eeff_trimestral(eeff_id):
+    ok = data_service.delete_eeff_trimestral(eeff_id)
+    if not ok:
+        return jsonify({"error": "Registro no encontrado"}), 404
+    return jsonify({"ok": True})
+
+
+@app.route("/api/operaciones")
+def api_operaciones():
+    """Historial de operaciones (compra/venta) importadas de comprobantes
+    PDF, opcionalmente filtradas por ticker (?ticker=XXX.SN)."""
+    ticker = request.args.get("ticker")
+    return jsonify(data_service.list_operaciones(ticker))
+
+
+@app.route("/api/comprobantes/sync", methods=["POST"])
+def api_comprobantes_sync():
+    """Escanea la carpeta de comprobantes montada (ver
+    config.COMPROBANTES_DIR) e importa las operaciones nuevas a la tabla
+    `operaciones`. No toca portfolio.json — para eso ver
+    /api/posiciones/recalculo_preview y /api/posiciones/recalculo_aplicar."""
+    return jsonify(comprobantes.sync_comprobantes())
+
+
+@app.route("/api/posiciones/recalculo_preview")
+def api_recalculo_preview():
+    """Compara la cantidad/precio_compra actuales de portfolio.json contra
+    lo que resulta de recalcularlos desde el historial completo de
+    `operaciones` (costo promedio ponderado). No modifica nada — solo
+    informa las diferencias para que el usuario decida qué aplicar en
+    /api/posiciones/recalculo_aplicar."""
+    calculado = data_service.recalcular_posiciones()
+    preview = []
+    for ticker, datos in calculado.items():
+        actual = PORTAFOLIO.get(ticker, {})
+        preview.append({
+            "ticker": ticker,
+            "nombre": actual.get("nombre"),
+            "es_nuevo": ticker not in PORTAFOLIO,
+            "cantidad_actual": actual.get("cantidad"),
+            "cantidad_calculada": datos["cantidad"],
+            "precio_compra_actual": actual.get("precio_compra"),
+            "precio_compra_calculado": round(datos["precio_compra"], 4),
+            "cambia": (
+                ticker not in PORTAFOLIO
+                or actual.get("cantidad") != datos["cantidad"]
+                or round(actual.get("precio_compra", 0), 4) != round(datos["precio_compra"], 4)
+            ),
+        })
+    preview.sort(key=lambda p: (not p["cambia"], p["ticker"]))
+    return jsonify(preview)
+
+
+@app.route("/api/posiciones/recalculo_aplicar", methods=["POST"])
+def api_recalculo_aplicar():
+    """Aplica a portfolio.json el recálculo de cantidad/precio_compra desde
+    `operaciones` para los tickers indicados (o todos, si no se especifica).
+    Los tickers nuevos (comprados en algún comprobante pero ausentes de
+    portfolio.json) se agregan con el ticker como nombre por defecto —
+    editable después a mano en /posiciones."""
+    body = request.get_json(silent=True) or {}
+    tickers_pedidos = body.get("tickers")
+
+    calculado = data_service.recalcular_posiciones()
+    if tickers_pedidos:
+        calculado = {t: v for t, v in calculado.items() if t in tickers_pedidos}
+
+    with _portfolio_lock:
+        for ticker, datos in calculado.items():
+            if ticker not in PORTAFOLIO:
+                PORTAFOLIO[ticker] = {"nombre": ticker.replace(".SN", ""), "cantidad": 0, "precio_compra": 0}
+            PORTAFOLIO[ticker]["cantidad"] = datos["cantidad"]
+            PORTAFOLIO[ticker]["precio_compra"] = round(datos["precio_compra"], 4)
+        _save_portfolio()
+        data_service.set_portfolio(PORTAFOLIO)
+
+    return jsonify({"aplicados": list(calculado.keys())})
 
 
 # --------------------------------------------------------------------------- #

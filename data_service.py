@@ -14,7 +14,7 @@ import json
 import logging
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 
@@ -124,6 +124,105 @@ def init_db():
             )
             """
         )
+        # Migración: columnas de Valor de Empresa (EV/EBITDA, EV/Ventas — ver
+        # valor_empresa.py) agregadas después de la creación original de la
+        # tabla. ALTER TABLE no tiene "IF NOT EXISTS" en SQLite, así que se
+        # ignora el error si la columna ya existe.
+        for col in (
+            "enterprise_value REAL", "ev_to_ebitda REAL", "ev_to_revenue REAL",
+            "ebitda REAL", "total_revenue REAL",
+        ):
+            try:
+                conn.execute(f"ALTER TABLE fundamentales ADD COLUMN {col}")
+            except sqlite3.OperationalError:
+                pass
+        # Dividendos reales ingresados a mano desde /posiciones. Tienen la
+        # misma precedencia que DIVIDENDOS_BCS (dividendos_bcs.py) sobre el
+        # historial de yfinance — se combinan ambas fuentes por ticker.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS manual_dividends (
+                id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker  TEXT NOT NULL,
+                date    TEXT NOT NULL,
+                amount  REAL NOT NULL
+            )
+            """
+        )
+        # EEFF trimestrales ingresados a mano desde /posiciones (ver
+        # fundamentales.py: la CMF no tiene API pública para EEFF de
+        # emisores no bancarios, así que se transcriben del PDF del portal
+        # CMF). Solo histórico visual — no alimentan el score del screener
+        # (no hay serie histórica confiable para todo el portafolio).
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS eeff_trimestral (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker            TEXT NOT NULL,
+                anio              INTEGER NOT NULL,
+                trimestre         INTEGER NOT NULL,
+                ingresos          REAL,
+                utilidad_neta     REAL,
+                roe               REAL,
+                deuda_patrimonio  REAL,
+                margen_neto       REAL,
+                UNIQUE(ticker, anio, trimestre)
+            )
+            """
+        )
+        # Migración: campos para calcular Valor de Empresa a mano (ver
+        # valor_empresa.py) cuando yfinance no trae el ratio para un ticker
+        # ilíquido. Se transcriben del mismo PDF de la CMF que el resto del
+        # EEFF trimestral: resultado operacional y D&A del Estado de
+        # Resultados/Flujo de Efectivo, deuda financiera (corriente + no
+        # corriente sumadas) y efectivo del Estado de Situación Financiera.
+        for col in (
+            "resultado_operacional REAL", "depreciacion_amortizacion REAL",
+            "deuda_financiera REAL", "efectivo_equivalentes REAL",
+        ):
+            try:
+                conn.execute(f"ALTER TABLE eeff_trimestral ADD COLUMN {col}")
+            except sqlite3.OperationalError:
+                pass
+        # Aportes de caja a la corredora (depósitos), ingresados a mano desde
+        # /posiciones. No son por ticker: es el capital que entra a la cuenta,
+        # independiente de en qué se invierta después. Sirve para comparar
+        # capital aportado vs. valor de mercado actual de la cartera (retorno
+        # real simple, no ponderado por tiempo).
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS aportes (
+                id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                date    TEXT NOT NULL,
+                amount  REAL NOT NULL
+            )
+            """
+        )
+        # Operaciones (compra/venta) importadas automáticamente desde los
+        # comprobantes PDF de las corredoras (Vector Capital, Itaú) — ver
+        # comprobantes.py. El UNIQUE compuesto (no solo el hash del archivo)
+        # es necesario porque una misma factura puede traer más de un
+        # instrumento (p.ej. dos acciones en la misma factura Itaú), así que
+        # varias filas comparten el mismo hash de archivo.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS operaciones (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker            TEXT NOT NULL,
+                tipo              TEXT NOT NULL,
+                fecha             TEXT NOT NULL,
+                cantidad          REAL NOT NULL,
+                precio_unitario   REAL,
+                monto             REAL NOT NULL,
+                institucion       TEXT NOT NULL,
+                numero_factura    TEXT,
+                archivo           TEXT NOT NULL,
+                hash              TEXT NOT NULL,
+                creado_en         TEXT NOT NULL,
+                UNIQUE(hash, ticker, tipo, cantidad, monto)
+            )
+            """
+        )
         conn.commit()
     log.info("Base de datos inicializada en %s", config.DB_PATH)
 
@@ -211,7 +310,92 @@ def _download_yfinance(ticker):
         log.warning("Fallo al descargar %s: %s", ticker, exc)
         return None
 
-    return _df_to_records(df, ticker)
+    return _interpolate_frozen_runs(_apply_live_quote(_df_to_records(df, ticker), ticker))
+
+
+def _fetch_live_quote(ticker):
+    """Consulta el snapshot de cotización en vivo (Ticker.info).
+
+    Para varias acciones ilíquidas de la BCS, el endpoint de histórico
+    (yf.download/history, usado en _download_yfinance) devuelve el cierre
+    CONGELADO de días/semanas atrás con volumen 0, y hasta el último precio
+    TRANSADO (regularMarketPrice) puede quedar viejo si la acción no ha
+    cruzado operaciones. El punto medio bid/ask sí refleja cotizaciones
+    activas del mercado en este momento, así que se prefiere como estimación
+    del valor actual cuando está disponible (decisión explícita del usuario:
+    para acciones sin transacciones recientes, usar (bid+ask)/2 en vez del
+    último precio transado).
+
+    Excepción: si el spread bid/ask es más ancho que
+    config.MAX_BID_ASK_SPREAD_PCT, el punto medio deja de ser representativo
+    (ej. bid=10200/ask=11363, spread ~11%, punto medio se aleja bastante del
+    último precio real transado) y se cae al último precio transado en su
+    lugar.
+    """
+    try:
+        import yfinance as yf
+    except ImportError:
+        return None
+    try:
+        info = yf.Ticker(ticker).get_info()
+    except Exception as exc:
+        log.warning("get_info() falló para %s: %s", ticker, exc)
+        return None
+
+    bid, ask = info.get("bid"), info.get("ask")
+    if bid and ask and bid > 0 and ask > 0:
+        mid = (float(bid) + float(ask)) / 2
+        spread_pct = (float(ask) - float(bid)) / mid
+        if spread_pct <= config.MAX_BID_ASK_SPREAD_PCT:
+            mid = round(mid, 2)
+            return {
+                "date": _market_now().date().isoformat(),
+                "open": mid,
+                "high": max(mid, round(float(ask), 2)),
+                "low": min(mid, round(float(bid), 2)),
+                "close": mid,
+                "volume": _i(info.get("regularMarketVolume")),
+            }
+        log.info(
+            "%s: spread bid/ask %.1f%% supera el máximo (%.1f%%); se usa el "
+            "último precio transado en vez del punto medio",
+            ticker, spread_pct * 100, config.MAX_BID_ASK_SPREAD_PCT * 100,
+        )
+
+    price = info.get("regularMarketPrice")
+    ts = info.get("regularMarketTime")
+    if price is None or ts is None:
+        return None
+    try:
+        date = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
+    except (TypeError, ValueError, OSError):
+        return None
+    return {
+        "date": date,
+        "open": _f(info.get("regularMarketOpen")) or round(float(price), 2),
+        "high": _f(info.get("regularMarketDayHigh")) or round(float(price), 2),
+        "low": _f(info.get("regularMarketDayLow")) or round(float(price), 2),
+        "close": round(float(price), 2),
+        "volume": _i(info.get("regularMarketVolume")),
+    }
+
+
+def _apply_live_quote(records, ticker):
+    """Reemplaza o agrega el último registro con el snapshot en vivo si es
+    igual o más reciente que el último dato histórico (ver _fetch_live_quote
+    para la razón)."""
+    if not records:
+        return records
+    quote = _fetch_live_quote(ticker)
+    if not quote:
+        return records
+    if quote["date"] < records[-1]["date"]:
+        return records
+    if quote["date"] == records[-1]["date"]:
+        records[-1] = quote
+    else:
+        records.append(quote)
+    return records
 
 
 def _download_last_price(ticker):
@@ -236,7 +420,7 @@ def _download_last_price(ticker):
         recs = _df_to_records(df, ticker)
         if recs:
             log.info("%s: último precio registrado recuperado vía history(%s)", ticker, period)
-            return recs
+            return _interpolate_frozen_runs(_apply_live_quote(recs, ticker))
     return None
 
 
@@ -305,15 +489,9 @@ def get_dividends_per_share_rango(ticker, since, hasta):
     hoy"), esta respeta un corte en el pasado — indispensable para el
     backtest, que no debe usar dividendos pagados después de la fecha que
     está evaluando (look-ahead bias)."""
-    try:
-        from dividendos_bcs import DIVIDENDOS_BCS
-    except ImportError:
-        DIVIDENDOS_BCS = {}
-
-    if ticker in DIVIDENDOS_BCS:
-        return sum(
-            d["amount"] for d in DIVIDENDOS_BCS[ticker] if since <= d["date"] <= hasta
-        )
+    known = _known_dividend_records(ticker)
+    if known is not None:
+        return sum(d["amount"] for d in known if since <= d["date"] <= hasta)
 
     with get_conn() as conn:
         rows = conn.execute(
@@ -324,30 +502,51 @@ def get_dividends_per_share_rango(ticker, since, hasta):
 
 
 def get_dividends_total(ticker, since="2025-03-01"):
-    """Total de dividendos pagados por la posición desde `since` (inclusive).
+    """Total de dividendos efectivamente cobrados por la posición desde
+    `since` (inclusive).
 
-    dividendo_por_acción × cantidad, sumado sobre las fechas de pago.
-    Usa la tabla oficial de la BCS si existe para el ticker; si no, cae a los
-    dividendos cacheados desde Yahoo Finance.
-    """
-    per_share = _dividends_per_share(ticker, since)
-    cantidad = _PORTFOLIO.get(ticker, {}).get("cantidad", 0) or 0
-    return round(per_share * cantidad, 2)
+    A diferencia de get_dividends_per_share (que es una suma por acción,
+    usada para el dividend yield), esto es un monto en CLP — así que
+    importa CUÁNTAS acciones tenías el día que quedó fijado cada dividendo
+    (fecha ex-dividendo, no la fecha de pago: comprar después del corte
+    ex-dividendo no da derecho a ese reparto aunque ya se tengan acciones
+    para cuando se paga). Por eso cada registro se multiplica por
+    cantidad_al(ticker, fecha_ex) en vez de por la cantidad actual de
+    portfolio.json — que sería la cantidad de HOY, casi siempre mayor a la
+    que había en cada fecha pasada.
+
+    Usa la tabla oficial de la BCS (dividendos_bcs.py, con fecha_ex) y/o
+    los dividendos manuales si existen para el ticker; si no, cae a los
+    dividendos cacheados desde Yahoo Finance (sin fecha ex-dividendo
+    propia — se usa la misma fecha del registro como aproximación)."""
+    known = _known_dividend_records(ticker)
+    hoy = datetime.utcnow().date().isoformat()
+
+    if known is not None:
+        total = 0.0
+        for d in known:
+            fecha_ex = d.get("date_ex") or d["date"]
+            if since <= d["date"] <= hoy:
+                total += d["amount"] * cantidad_al(ticker, fecha_ex)
+        return round(total, 2)
+
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT date, amount FROM dividends WHERE ticker = ? AND date >= ?",
+            (ticker, since),
+        ).fetchall()
+    total = sum((r["amount"] or 0) * cantidad_al(ticker, r["date"]) for r in rows if r["date"] <= hoy)
+    return round(total, 2)
 
 
 def _dividends_per_share(ticker, since):
-    """Dividendo total por acción desde `since`. BCS tiene precedencia."""
-    try:
-        from dividendos_bcs import DIVIDENDOS_BCS
-    except ImportError:
-        DIVIDENDOS_BCS = {}
-
-    if ticker in DIVIDENDOS_BCS:
+    """Dividendo total por acción desde `since`. BCS + manuales tienen
+    precedencia sobre el historial de yfinance."""
+    known = _known_dividend_records(ticker)
+    if known is not None:
         hoy = datetime.utcnow().date().isoformat()
         return sum(
-            d["amount"]
-            for d in DIVIDENDOS_BCS[ticker]
-            if since <= d["date"] <= hoy  # sólo dividendos ya pagados
+            d["amount"] for d in known if since <= d["date"] <= hoy  # sólo pagados
         )
 
     with get_conn() as conn:
@@ -356,6 +555,345 @@ def _dividends_per_share(ticker, since):
             (ticker, since),
         ).fetchall()
     return sum((r["amount"] or 0) for r in rows)
+
+
+def _known_dividend_records(ticker):
+    """Combina DIVIDENDOS_BCS (dividendos_bcs.py) con los dividendos
+    ingresados a mano (tabla manual_dividends) para un ticker. Devuelve
+    `None` si no hay ningún dato "conocido" para ese ticker (en cuyo caso
+    quien llama debe caer al historial de yfinance)."""
+    try:
+        from dividendos_bcs import DIVIDENDOS_BCS
+    except ImportError:
+        DIVIDENDOS_BCS = {}
+
+    records = list(DIVIDENDOS_BCS.get(ticker, [])) + list_manual_dividends(ticker)
+    return records or None
+
+
+def list_dividendos_todos(ticker=None):
+    """Todos los dividendos "conocidos" (DIVIDENDOS_BCS + manual_dividends)
+    de la cartera, para mostrarlos juntos en /posiciones. Los de BCS vienen
+    con id=None (no se pueden borrar desde la UI: viven en dividendos_bcs.py,
+    no en la base de datos) y fuente="BCS"; los manuales traen su id real y
+    fuente="manual". Ordenados por fecha descendente."""
+    try:
+        from dividendos_bcs import DIVIDENDOS_BCS
+    except ImportError:
+        DIVIDENDOS_BCS = {}
+
+    tickers = [ticker] if ticker else list(_PORTFOLIO.keys())
+    registros = []
+    for t in tickers:
+        for d in DIVIDENDOS_BCS.get(t, []):
+            registros.append({
+                "id": None, "ticker": t, "date": d["date"], "amount": d["amount"],
+                "fuente": "BCS",
+            })
+        for d in list_manual_dividends(t):
+            registros.append({**d, "ticker": t, "fuente": "manual"})
+
+    registros.sort(key=lambda r: (r["date"], r["ticker"]), reverse=True)
+    return registros
+
+
+# --------------------------------------------------------------------------- #
+# Dividendos manuales (ingresados por el usuario en /posiciones)
+# --------------------------------------------------------------------------- #
+def list_manual_dividends(ticker=None):
+    """Lista de dividendos manuales, opcionalmente filtrados por ticker,
+    ordenados por fecha descendente."""
+    with get_conn() as conn:
+        if ticker:
+            rows = conn.execute(
+                "SELECT id, ticker, date, amount FROM manual_dividends "
+                "WHERE ticker = ? ORDER BY date DESC, id DESC",
+                (ticker,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, ticker, date, amount FROM manual_dividends "
+                "ORDER BY date DESC, id DESC"
+            ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_manual_dividend(ticker, date, amount):
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO manual_dividends (ticker, date, amount) VALUES (?, ?, ?)",
+            (ticker, date, amount),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def delete_manual_dividend(dividend_id):
+    with get_conn() as conn:
+        cur = conn.execute("DELETE FROM manual_dividends WHERE id = ?", (dividend_id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+# --------------------------------------------------------------------------- #
+# Aportes de caja a la corredora (ingresados por el usuario en /posiciones)
+# --------------------------------------------------------------------------- #
+def list_aportes():
+    """Lista de aportes (depósitos), ordenados por fecha descendente."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, date, amount FROM aportes ORDER BY date DESC, id DESC"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_aporte(date, amount):
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO aportes (date, amount) VALUES (?, ?)", (date, amount)
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def delete_aporte(aporte_id):
+    with get_conn() as conn:
+        cur = conn.execute("DELETE FROM aportes WHERE id = ?", (aporte_id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def total_aportado():
+    with get_conn() as conn:
+        row = conn.execute("SELECT COALESCE(SUM(amount), 0) AS total FROM aportes").fetchone()
+    return row["total"]
+
+
+# --------------------------------------------------------------------------- #
+# Operaciones (compra/venta) importadas de comprobantes PDF — ver
+# comprobantes.py y app.py: POST /api/comprobantes/sync
+# --------------------------------------------------------------------------- #
+def list_operaciones(ticker=None):
+    """Lista de operaciones, opcionalmente filtradas por ticker, ordenadas
+    por fecha descendente (más reciente primero)."""
+    with get_conn() as conn:
+        if ticker:
+            rows = conn.execute(
+                "SELECT * FROM operaciones WHERE ticker = ? "
+                "ORDER BY fecha DESC, id DESC",
+                (ticker,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM operaciones ORDER BY fecha DESC, id DESC"
+            ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def insert_operaciones(operaciones):
+    """Inserta operaciones parseadas de comprobantes.py. Las que ya existen
+    (mismo hash+ticker+tipo+cantidad+monto — comprobante duplicado o ya
+    sincronizado antes) se ignoran silenciosamente. Devuelve cuántas filas
+    nuevas se insertaron efectivamente."""
+    if not operaciones:
+        return 0
+    with get_conn() as conn:
+        cur = conn.executemany(
+            """
+            INSERT OR IGNORE INTO operaciones
+                (ticker, tipo, fecha, cantidad, precio_unitario, monto,
+                 institucion, numero_factura, archivo, hash, creado_en)
+            VALUES
+                (:ticker, :tipo, :fecha, :cantidad, :precio_unitario, :monto,
+                 :institucion, :numero_factura, :archivo, :hash, :creado_en)
+            """,
+            [{**op, "creado_en": datetime.utcnow().isoformat()} for op in operaciones],
+        )
+        conn.commit()
+        return cur.rowcount
+
+
+def cantidad_al(ticker, fecha):
+    """Cantidad de acciones en cartera al cierre de `fecha` (YYYY-MM-DD),
+    derivada del historial de `operaciones` (comprobantes) en vez de la
+    cantidad actual de portfolio.json — indispensable para dividendos: la
+    cartera ha ido creciendo con compras posteriores, así que multiplicar
+    un dividendo pagado hace meses por la cantidad de HOY infla el monto
+    muy por encima de lo que realmente se cobró (ver get_dividends_total).
+
+    Si `operaciones` no cubre el 100% del historial de un ticker (p.ej.
+    compras hechas antes de empezar a guardar comprobantes — caso
+    detectado en TRICAHUE, ver recalcular_posiciones), la diferencia entre
+    el total derivado de `operaciones` y la cantidad actual se trata como
+    un "saldo base" ya en cartera desde antes de la primera operación
+    registrada, en vez de asumir 0. Si el ticker no tiene ninguna
+    operación registrada, esto se reduce a devolver la cantidad actual
+    para cualquier fecha — mismo comportamiento que antes de tener este
+    historial, sin regresión."""
+    cantidad_actual = _PORTFOLIO.get(ticker, {}).get("cantidad", 0) or 0
+    with get_conn() as conn:
+        filas = conn.execute(
+            "SELECT tipo, fecha, cantidad FROM operaciones WHERE ticker = ? ORDER BY fecha ASC",
+            (ticker,),
+        ).fetchall()
+    if not filas:
+        return cantidad_actual
+
+    derivado_total = 0.0
+    derivado_al_fecha = 0.0
+    for f in filas:
+        delta = f["cantidad"] if f["tipo"] == "COMPRA" else -f["cantidad"]
+        derivado_total += delta
+        if f["fecha"] <= fecha:
+            derivado_al_fecha += delta
+
+    saldo_base = max(0.0, cantidad_actual - derivado_total)
+    return saldo_base + derivado_al_fecha
+
+
+def recalcular_posiciones():
+    """Deriva cantidad y precio de compra promedio ponderado por ticker
+    desde el historial completo de `operaciones`, en orden cronológico:
+    cada COMPRA promedia su precio con lo que ya había (costo promedio
+    ponderado); cada VENTA solo resta cantidad (el precio promedio de lo
+    que queda no cambia — no calculamos P&L realizado, fuera de alcance).
+    La cantidad nunca baja de 0 (una venta que exceda lo comprado registrado
+    se trata como si vendiera todo lo que hay).
+
+    No escribe nada — devuelve {ticker: {"cantidad": ..., "precio_compra":
+    ...}} para que app.py arme un preview antes/después y el usuario
+    confirme antes de aplicarlo a portfolio.json."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT ticker, tipo, fecha, cantidad, precio_unitario FROM operaciones "
+            "ORDER BY fecha ASC, id ASC"
+        ).fetchall()
+
+    posiciones = {}
+    for r in rows:
+        pos = posiciones.setdefault(r["ticker"], {"cantidad": 0.0, "precio_compra": 0.0})
+        if r["tipo"] == "COMPRA":
+            costo_actual = pos["cantidad"] * pos["precio_compra"]
+            costo_nuevo = r["cantidad"] * (r["precio_unitario"] or 0)
+            cantidad_total = pos["cantidad"] + r["cantidad"]
+            pos["precio_compra"] = (
+                (costo_actual + costo_nuevo) / cantidad_total if cantidad_total else 0
+            )
+            pos["cantidad"] = cantidad_total
+        elif r["tipo"] == "VENTA":
+            pos["cantidad"] = max(0.0, pos["cantidad"] - r["cantidad"])
+
+    return posiciones
+
+
+# --------------------------------------------------------------------------- #
+# EEFF trimestrales (ingresados por el usuario en /posiciones)
+# --------------------------------------------------------------------------- #
+def list_eeff_trimestral(ticker=None):
+    """Lista de EEFF trimestrales, opcionalmente filtrados por ticker,
+    ordenados por año/trimestre descendente."""
+    with get_conn() as conn:
+        if ticker:
+            rows = conn.execute(
+                "SELECT * FROM eeff_trimestral WHERE ticker = ? "
+                "ORDER BY anio DESC, trimestre DESC",
+                (ticker,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM eeff_trimestral ORDER BY anio DESC, trimestre DESC"
+            ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def upsert_eeff_trimestral(ticker, anio, trimestre, ingresos, utilidad_neta,
+                            roe, deuda_patrimonio, margen_neto,
+                            resultado_operacional=None, depreciacion_amortizacion=None,
+                            deuda_financiera=None, efectivo_equivalentes=None):
+    """Crea o actualiza (por ticker+año+trimestre) un registro de EEFF."""
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO eeff_trimestral
+                (ticker, anio, trimestre, ingresos, utilidad_neta, roe,
+                 deuda_patrimonio, margen_neto, resultado_operacional,
+                 depreciacion_amortizacion, deuda_financiera, efectivo_equivalentes)
+            VALUES (:ticker, :anio, :trimestre, :ingresos, :utilidad_neta,
+                     :roe, :deuda_patrimonio, :margen_neto, :resultado_operacional,
+                     :depreciacion_amortizacion, :deuda_financiera, :efectivo_equivalentes)
+            ON CONFLICT(ticker, anio, trimestre) DO UPDATE SET
+                ingresos=excluded.ingresos, utilidad_neta=excluded.utilidad_neta,
+                roe=excluded.roe, deuda_patrimonio=excluded.deuda_patrimonio,
+                margen_neto=excluded.margen_neto,
+                resultado_operacional=excluded.resultado_operacional,
+                depreciacion_amortizacion=excluded.depreciacion_amortizacion,
+                deuda_financiera=excluded.deuda_financiera,
+                efectivo_equivalentes=excluded.efectivo_equivalentes
+            """,
+            {
+                "ticker": ticker, "anio": anio, "trimestre": trimestre,
+                "ingresos": ingresos, "utilidad_neta": utilidad_neta, "roe": roe,
+                "deuda_patrimonio": deuda_patrimonio, "margen_neto": margen_neto,
+                "resultado_operacional": resultado_operacional,
+                "depreciacion_amortizacion": depreciacion_amortizacion,
+                "deuda_financiera": deuda_financiera,
+                "efectivo_equivalentes": efectivo_equivalentes,
+            },
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT id FROM eeff_trimestral WHERE ticker = ? AND anio = ? AND trimestre = ?",
+            (ticker, anio, trimestre),
+        ).fetchone()
+        return row["id"]
+
+
+def delete_eeff_trimestral(eeff_id):
+    with get_conn() as conn:
+        cur = conn.execute("DELETE FROM eeff_trimestral WHERE id = ?", (eeff_id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def get_eeff_trimestral_ultimo(ticker):
+    """Registro EEFF trimestral más reciente (por año/trimestre) de un
+    ticker, para usarlo como respaldo del cálculo de Valor de Empresa
+    cuando yfinance no trae el dato. None si no hay ninguno cargado."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM eeff_trimestral WHERE ticker = ? "
+            "ORDER BY anio DESC, trimestre DESC LIMIT 1",
+            (ticker,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_eeff_trimestral_ttm(ticker):
+    """Suma los últimos 4 trimestres cargados a mano (no necesariamente
+    consecutivos) para aproximar un EBITDA/ingresos TTM (trailing twelve
+    months), comparable con el ev_to_ebitda de yfinance (que también es
+    TTM). Ver valor_empresa._desde_manual: usar un solo trimestre como si
+    fuera el EBITDA anual infla el múltiplo EV/EBITDA ~4x.
+    Los campos de balance (deuda financiera, efectivo) usan el trimestre
+    más reciente (son un saldo a un punto en el tiempo, no un flujo que se
+    pueda sumar). None si hay menos de 4 trimestres con resultado
+    operacional y D&A cargados."""
+    trimestres = [
+        t for t in list_eeff_trimestral(ticker)
+        if t.get("resultado_operacional") is not None
+        and t.get("depreciacion_amortizacion") is not None
+    ][:4]
+    if len(trimestres) < 4:
+        return None
+    ultimo = trimestres[0]
+    return {
+        "resultado_operacional": sum(t["resultado_operacional"] for t in trimestres),
+        "depreciacion_amortizacion": sum(t["depreciacion_amortizacion"] for t in trimestres),
+        "ingresos": sum(t["ingresos"] for t in trimestres if t.get("ingresos") is not None) or None,
+        "deuda_financiera": ultimo.get("deuda_financiera"),
+        "efectivo_equivalentes": ultimo.get("efectivo_equivalentes"),
+        "periodo": f"TTM {trimestres[-1]['anio']}-Q{trimestres[-1]['trimestre']}..{ultimo['anio']}-Q{ultimo['trimestre']}",
+    }
 
 
 def _df_to_records(df, ticker):
@@ -392,6 +930,47 @@ def _df_to_records(df, ticker):
             }
         )
     return records or None
+
+
+def _interpolate_frozen_runs(records):
+    """Corrige el cierre CONGELADO que yfinance a veces devuelve para
+    tickers de la BCS: varios días seguidos con el mismo close y
+    volumen 0 (ver _fetch_live_quote). Esas filas no son datos reales,
+    son un artefacto del feed de Yahoo, pero dejarlas en blanco tampoco
+    sirve porque el usuario quiere ver una fluctuación diaria creíble.
+
+    Para cada corrida de >=2 días congelados que tenga un cierre real
+    ANTES y DESPUÉS (o sea, ya se resolvió), se reemplaza el tramo por
+    una interpolación lineal entre ambos cierres reales. Si la corrida
+    llega hasta el final de la serie (todavía sin resolver), se deja
+    intacta porque no hay cierre futuro real con el que interpolar.
+    """
+    if not records:
+        return records
+    n = len(records)
+    i = 1
+    while i < n:
+        prev = records[i - 1]
+        if records[i]["volume"] == 0 and records[i]["close"] == prev["close"] and prev["volume"]:
+            start = i
+            j = i
+            while j < n and records[j]["volume"] == 0 and records[j]["close"] == prev["close"]:
+                j += 1
+            if j < n and (j - start) >= 2:
+                close_before = prev["close"]
+                close_after = records[j]["close"]
+                span = j - start + 1
+                for k in range(start, j):
+                    frac = (k - start + 1) / span
+                    interp = round(close_before + (close_after - close_before) * frac, 2)
+                    records[k]["close"] = interp
+                    records[k]["open"] = interp
+                    records[k]["high"] = interp
+                    records[k]["low"] = interp
+            i = j
+        else:
+            i += 1
+    return records
 
 
 def _f(v):
@@ -540,16 +1119,20 @@ def _save_fundamentales(ticker, datos):
             """
             INSERT INTO fundamentales
                 (ticker, updated_at, trailing_pe, forward_pe, price_to_book,
-                 return_on_equity, profit_margin, debt_to_equity, market_cap, sector)
+                 return_on_equity, profit_margin, debt_to_equity, market_cap, sector,
+                 enterprise_value, ev_to_ebitda, ev_to_revenue, ebitda, total_revenue)
             VALUES
                 (:ticker, :updated_at, :trailing_pe, :forward_pe, :price_to_book,
-                 :return_on_equity, :profit_margin, :debt_to_equity, :market_cap, :sector)
+                 :return_on_equity, :profit_margin, :debt_to_equity, :market_cap, :sector,
+                 :enterprise_value, :ev_to_ebitda, :ev_to_revenue, :ebitda, :total_revenue)
             ON CONFLICT(ticker) DO UPDATE SET
                 updated_at=excluded.updated_at, trailing_pe=excluded.trailing_pe,
                 forward_pe=excluded.forward_pe, price_to_book=excluded.price_to_book,
                 return_on_equity=excluded.return_on_equity, profit_margin=excluded.profit_margin,
                 debt_to_equity=excluded.debt_to_equity, market_cap=excluded.market_cap,
-                sector=excluded.sector
+                sector=excluded.sector, enterprise_value=excluded.enterprise_value,
+                ev_to_ebitda=excluded.ev_to_ebitda, ev_to_revenue=excluded.ev_to_revenue,
+                ebitda=excluded.ebitda, total_revenue=excluded.total_revenue
             """,
             {"ticker": ticker, "updated_at": datetime.utcnow().isoformat(), **datos},
         )
@@ -806,6 +1389,17 @@ def get_summary(ticker):
     pnl = round(valor_mercado - invertido, 2)
     pnl_pct = round((last["close"] - precio_compra) / precio_compra * 100, 2) if precio_compra else 0.0
 
+    # Distancia entre MM20 y MM50, hoy y hace ~5 ruedas, para poder avisar
+    # cuando un cruce dorado/de la muerte está cerca (sin predecir cuándo:
+    # sólo qué tan cerca están y si se están acercando). Ver app.js maProximity().
+    ref = recs[max(0, len(recs) - 6)]
+    ma_gap_pct = (
+        round((last["ma20"] - last["ma50"]) / last["ma50"] * 100, 2) if last.get("ma50") else None
+    )
+    ma_gap_pct_prev = (
+        round((ref["ma20"] - ref["ma50"]) / ref["ma50"] * 100, 2) if ref.get("ma50") else None
+    )
+
     return {
         "ticker": ticker,
         "name": data["name"],
@@ -830,4 +1424,6 @@ def get_summary(ticker):
         "valor_mercado": valor_mercado,
         "pnl": pnl,
         "pnl_pct": pnl_pct,
+        "ma_gap_pct": ma_gap_pct,
+        "ma_gap_pct_prev": ma_gap_pct_prev,
     }

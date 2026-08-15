@@ -21,6 +21,23 @@ function signalBadge(ticker) {
   return `<span class="badge badge-signal ${signalClass(s.senal)}" title="Score ${s.score}">${s.senal}</span>`;
 }
 
+/* "¿Qué tan cerca está un cruce de medias?" — NO predice una fecha (eso
+   depende de precios futuros desconocidos): sólo compara la distancia de
+   hoy entre MM20/MM50 contra la de hace ~5 ruedas. Si están cerca (<3%) Y
+   acercándose, avisa para que el usuario esté atento; si se están alejando,
+   no dice nada aunque estén cerca (ya "pasó de largo"). */
+const MA_CLOSE_THRESHOLD_PCT = 3;
+
+function maProximity(x) {
+  if (x.ma_gap_pct == null || x.ma_gap_pct_prev == null) return null;
+  const narrowing = Math.abs(x.ma_gap_pct) < Math.abs(x.ma_gap_pct_prev);
+  if (!narrowing || Math.abs(x.ma_gap_pct) >= MA_CLOSE_THRESHOLD_PCT) return null;
+  const dist = Math.abs(x.ma_gap_pct).toFixed(1);
+  return x.ma_gap_pct < 0
+    ? { type: "buy", icon: "▲", text: `${dist}% de cruce dorado` }
+    : { type: "sell", icon: "▼", text: `${dist}% de cruce de muerte` };
+}
+
 const fmtCLP = (v) =>
   new Intl.NumberFormat("es-CL", { maximumFractionDigits: 2 }).format(v);
 const fmtInt = (v) =>
@@ -86,6 +103,12 @@ async function loadStocks() {
   } catch (_) {
     state.fundamentales = {};
   }
+  try {
+    const aportes = await getJSON("/api/aportes");
+    state.totalAportado = aportes.reduce((a, r) => a + r.amount, 0);
+  } catch (_) {
+    state.totalAportado = 0;
+  }
   renderKPIs();
   renderList();
   if (state.stocks.length) selectStock(state.stocks[0].ticker);
@@ -119,6 +142,19 @@ function renderKPIs() {
     { label: "Variación media (día)", value: pct(avgChg), sub: `${gainers} al alza · ${n - gainers} a la baja`, cls: cls(avgChg) },
     { label: "Mejor retorno 1A", value: best ? best.name : "—", sub: best ? pct(best.return_1y) : "", cls: best ? cls(best.return_1y) : "" },
   ];
+
+  // Capital aportado vs. valor de mercado actual: retorno real simple
+  // (no ponderado por fecha de cada aporte, a diferencia de un XIRR).
+  const aportado = state.totalAportado || 0;
+  if (aportado > 0) {
+    const retornoAportes = ((totVal - aportado) / aportado) * 100;
+    cards.push({
+      label: "Retorno sobre aportes",
+      value: pct(retornoAportes),
+      sub: `${money(aportado)} aportado · ${money(totVal)} hoy`,
+      cls: cls(retornoAportes),
+    });
+  }
   document.getElementById("kpis").innerHTML = cards
     .map(
       (c) => `<div class="kpi"><div class="label">${c.label}</div>
@@ -145,10 +181,14 @@ function renderList(filter = "") {
   document.getElementById("stockList").innerHTML = items
     .map((x) => {
       const warn = staleBadge(x);
+      const prox = maProximity(x);
+      const proxHtml = prox
+        ? `<div class="si-ma ${prox.type === "buy" ? "pos" : "neg"}" title="MM20 y MM50 se están acercando">${prox.icon} ${prox.text}</div>`
+        : "";
       return `<li class="stock-item ${x.ticker === state.current ? "active" : ""}" data-ticker="${x.ticker}">
         <div><div class="si-name">${x.name} ${warn}</div><div class="si-ticker">${x.ticker} ${signalBadge(x.ticker)}</div></div>
         <div class="si-right"><div class="si-price">$${fmtCLP(x.last_close)}</div>
-        <div class="si-chg ${cls(x.change_pct)}">${pct(x.change_pct)}</div></div>
+        <div class="si-chg ${cls(x.change_pct)}">${pct(x.change_pct)}</div>${proxHtml}</div>
       </li>`;
     })
     .join("");
@@ -186,6 +226,18 @@ function renderDetail(data) {
   } else {
     sigEl.textContent = "";
     sigEl.className = "signal";
+  }
+
+  const summary = state.stocks.find((s) => s.ticker === data.ticker);
+  const prox = summary ? maProximity(summary) : null;
+  const proxEl = document.getElementById("detailMaProx");
+  if (prox) {
+    proxEl.textContent = `${prox.icon} ${prox.text}`;
+    proxEl.className = `chip chip-ma ${prox.type === "buy" ? "pos" : "neg"}`;
+    proxEl.title = "MM20 y MM50 se están acercando — todavía no hay cruce, sólo se están aproximando";
+  } else {
+    proxEl.textContent = "";
+    proxEl.className = "chip chip-ma chip-ma-hidden";
   }
 
   // Banner de aviso cuando el precio no está vigente o es estimado
@@ -288,6 +340,25 @@ function themeColors() {
   };
 }
 
+/* Cruces de medias móviles: MM20 sobre MM50 = "cruce dorado" (señal técnica
+   de compra); MM20 bajo MM50 = "cruce de la muerte" (señal técnica de
+   venta). Se ignoran los primeros 49 puntos porque ahí MM50 todavía es un
+   promedio "expandido" (con menos de 50 datos reales) y cruza de forma
+   artificial, no por una señal real del mercado. */
+function computeCrosses(recs) {
+  const buy = new Array(recs.length).fill(null);
+  const sell = new Array(recs.length).fill(null);
+  for (let i = 49; i < recs.length; i++) {
+    const prev = recs[i - 1], cur = recs[i];
+    if ([prev.ma20, prev.ma50, cur.ma20, cur.ma50].some((v) => v == null)) continue;
+    const prevDiff = prev.ma20 - prev.ma50;
+    const curDiff = cur.ma20 - cur.ma50;
+    if (prevDiff <= 0 && curDiff > 0) buy[i] = cur.close;
+    else if (prevDiff >= 0 && curDiff < 0) sell[i] = cur.close;
+  }
+  return { buy, sell };
+}
+
 function drawPrice(recs) {
   const ctx = document.getElementById("priceChart");
   const labels = recs.map((r) => r.date);
@@ -300,6 +371,8 @@ function drawPrice(recs) {
   grad.addColorStop(0, up ? "rgba(34,197,94,.28)" : "rgba(239,68,68,.28)");
   grad.addColorStop(1, "rgba(0,0,0,0)");
 
+  const { buy, sell } = computeCrosses(recs);
+
   state.priceChart = new Chart(ctx, {
     type: "line",
     data: {
@@ -311,6 +384,12 @@ function drawPrice(recs) {
           borderWidth: 1.2, borderDash: [5, 4], pointRadius: 0, fill: false, tension: 0.15 },
         { label: "MM50", data: recs.map((r) => r.ma50), borderColor: "#f59e0b",
           borderWidth: 1.2, borderDash: [2, 3], pointRadius: 0, fill: false, tension: 0.15 },
+        { label: "Cruce dorado (compra)", data: buy, showLine: false, fill: false,
+          pointStyle: "triangle", pointRadius: 7, pointHoverRadius: 8,
+          pointBackgroundColor: "#22c55e", pointBorderColor: "#22c55e" },
+        { label: "Cruce de la muerte (venta)", data: sell, showLine: false, fill: false,
+          pointStyle: "triangle", pointRotation: 180, pointRadius: 7, pointHoverRadius: 8,
+          pointBackgroundColor: "#ef4444", pointBorderColor: "#ef4444" },
       ],
     },
     options: {
@@ -319,6 +398,7 @@ function drawPrice(recs) {
       plugins: {
         legend: { display: true, labels: { color: c.tick, boxWidth: 14, font: { size: 11 } } },
         tooltip: {
+          filter: (item) => item.parsed.y != null,
           callbacks: {
             label: (i) => `${i.dataset.label}: $${fmtCLP(i.parsed.y)}`,
           },

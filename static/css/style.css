@@ -142,6 +142,9 @@ body {
 .chip-source[data-src="cache"]    { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, var(--border)); }
 .chip-source[data-src="synthetic"]{ color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
 .muted { color: var(--muted); font-size: 12.5px; }
+.chip-ma { background: var(--bg-elev2); }
+.chip-ma-hidden { display: none; }
+.si-ma { font-size: 10.5px; font-weight: 700; margin-top: 3px; text-align: right; }
 .detail-price { text-align: right; }
 .price { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .change { display: block; font-size: 14px; font-weight: 600; margin-top: 2px; }
@@ -281,6 +284,7 @@ body {
   background: var(--bg); transition: opacity .4s;
 }
 .loader-overlay.hide { opacity: 0; pointer-events: none; }
+.hidden { display: none; }
 .loader-overlay p { color: var(--text-dim); font-size: 14px; }
 .spinner {
   width: 46px; height: 46px; border-radius: 50%;
@@ -295,3 +299,30 @@ body {
   display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;
   font-size: 12px; color: var(--muted);
 }
+
+/* ---------- Posiciones ---------- */
+.pos-card {
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 18px 20px; margin-bottom: 20px;
+}
+.pos-input {
+  width: 100%; min-width: 110px; font-family: inherit; font-size: 13px;
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; padding: 7px 10px; outline: none;
+  font-variant-numeric: tabular-nums;
+}
+.pos-input:focus { border-color: var(--accent); }
+.div-form {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+  margin: 14px 0 6px;
+}
+.div-form select, .div-form input {
+  font-family: inherit; font-size: 13px;
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 12px; outline: none;
+}
+.div-form select { min-width: 220px; }
+.div-form input[type="number"] { width: 150px; }
+.div-form select:focus, .div-form input:focus { border-color: var(--accent); }
+.div-error { color: var(--neg); font-size: 12.5px; min-height: 16px; margin-bottom: 8px; }
+.btn-del { padding: 6px 9px; }
