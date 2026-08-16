@@ -4,15 +4,24 @@
 
 const state = { rows: [], tickers: [], hidden: new Set(), charts: {} };
 
-/* Paleta categórica validada (skill dataviz), misma que distribucion.js —
-   pero asignada de forma ESTABLE por ticker (orden fijo), no por ranking:
-   acá el color identifica a la acción a través del tiempo, no una posición
-   relativa que cambia de gráfico en gráfico. */
+/* Paleta categórica validada (skill dataviz) — las 8 familias completas
+   (distribucion.js solo usa 7 porque ahí la cola cae en "Otras"; acá no hay
+   cola, cada ticker necesita mantener su propia identidad). Asignada de
+   forma ESTABLE por ticker (orden fijo), no por ranking: el color identifica
+   a la acción a través del tiempo, no una posición relativa que cambia de
+   gráfico en gráfico.
+
+   Con más de 8 series el propio skill de dataviz prohíbe generar un 9no tono
+   (indistinguible bajo daltonismo) o colapsarlas todas en un gris "Otras"
+   (que es justo el bug que esto reemplaza: 8 acciones quedaban con el mismo
+   punto gris, indistinguibles entre sí). En vez de eso, el ticker 9 reutiliza
+   el tono del ticker 1 pero con línea punteada, el 10 el del 2, etc. — tono
+   + trazo como codificación compuesta, nunca solo color. */
 const PALETTE = {
-  dark:  ["#3987e5", "#199e70", "#c98500", "#008300", "#9085e9", "#e66767", "#d55181"],
-  light: ["#2a78d6", "#1baf7a", "#eda100", "#008300", "#4a3aa7", "#e34948", "#e87ba4"],
+  dark:  ["#3987e5", "#199e70", "#c98500", "#008300", "#9085e9", "#e66767", "#d55181", "#d95926"],
+  light: ["#2a78d6", "#1baf7a", "#eda100", "#008300", "#4a3aa7", "#e34948", "#e87ba4", "#eb6834"],
 };
-const OTHER_COLOR = "#898781";
+const DASH_PATTERNS = [[], [7, 4]]; // sólido para tickers 1-8, punteado para 9-16
 
 const METRICS = [
   { key: "ingresos", label: "Ingresos", unit: "MM CLP" },
@@ -44,7 +53,12 @@ function themeColors() {
 }
 function colorFor(tickerIndex) {
   const p = PALETTE[theme()];
-  return tickerIndex < p.length ? p[tickerIndex] : OTHER_COLOR;
+  return p[tickerIndex % p.length];
+}
+function dashFor(tickerIndex) {
+  const p = PALETTE[theme()];
+  const tier = Math.floor(tickerIndex / p.length);
+  return DASH_PATTERNS[Math.min(tier, DASH_PATTERNS.length - 1)];
 }
 
 function fmtNum(v) {
@@ -68,8 +82,12 @@ function renderLegend() {
     .map((t, i) => {
       const name = state.names[t] || t;
       const off = state.hidden.has(t);
-      return `<button class="chip ${off ? "chip-off" : ""}" data-ticker="${t}">
-        <span class="chip-dot" style="background:${colorFor(i)}"></span>${name}
+      const dashed = dashFor(i).length > 0;
+      const swatch = dashed
+        ? `<svg class="chip-swatch" width="16" height="10" viewBox="0 0 16 10"><line x1="0" y1="5" x2="16" y2="5" stroke="${colorFor(i)}" stroke-width="2.5" stroke-dasharray="4,2.5"/></svg>`
+        : `<span class="chip-dot" style="background:${colorFor(i)}"></span>`;
+      return `<button class="chip ${off ? "chip-off" : ""}" data-ticker="${t}" title="${dashed ? "Línea punteada (comparte tono con otra acción arriba)" : ""}">
+        ${swatch}${name}
       </button>`;
     })
     .join("");
@@ -100,6 +118,7 @@ function drawMetric(metric, periodos) {
         data: periodos.map((p) => (byPeriodo[p] != null ? byPeriodo[p] : null)),
         borderColor: colorFor(idx),
         backgroundColor: colorFor(idx),
+        borderDash: dashFor(idx),
         borderWidth: 2,
         pointRadius: 4,
         pointHoverRadius: 6,

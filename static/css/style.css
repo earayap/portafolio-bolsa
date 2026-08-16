@@ -256,6 +256,7 @@ body {
   cursor: pointer; transition: opacity .15s;
 }
 .chip-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.chip-swatch { flex: none; }
 .chip-off { opacity: .35; }
 .eeff-grid {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 18px;
