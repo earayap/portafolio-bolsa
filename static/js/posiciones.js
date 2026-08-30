@@ -21,7 +21,10 @@ let PORTFOLIO_NAMES = {};
 
 function renderPosRow(ticker, info) {
   return `<tr data-ticker="${ticker}">
-    <td><div class="st-name">${info.nombre}</div><div class="st-ticker">${ticker}</div></td>
+    <td>
+      <input type="text" class="pos-input pos-input-nombre" data-field="nombre" value="${info.nombre}">
+      <div class="st-ticker">${ticker}</div>
+    </td>
     <td><input type="number" class="pos-input" data-field="cantidad" min="0" step="1" value="${info.cantidad}"></td>
     <td><input type="number" class="pos-input" data-field="precio_compra" min="0" step="0.01" value="${info.precio_compra}"></td>
     <td><button class="btn btn-save" data-ticker="${ticker}">Guardar</button></td>
@@ -38,6 +41,7 @@ function renderPosTable(portfolio) {
 
 async function savePosicion(ticker) {
   const row = document.querySelector(`#posBody tr[data-ticker="${ticker}"]`);
+  const nombre = row.querySelector('[data-field="nombre"]').value;
   const cantidad = row.querySelector('[data-field="cantidad"]').value;
   const precio_compra = row.querySelector('[data-field="precio_compra"]').value;
   const btn = row.querySelector(".btn-save");
@@ -45,7 +49,7 @@ async function savePosicion(ticker) {
   btn.textContent = "Guardando…";
   btn.disabled = true;
   try {
-    await postJSON(`/api/posiciones/${encodeURIComponent(ticker)}`, { cantidad, precio_compra });
+    await postJSON(`/api/posiciones/${encodeURIComponent(ticker)}`, { nombre, cantidad, precio_compra });
     btn.textContent = "✓ Guardado";
   } catch (e) {
     btn.textContent = "Error";

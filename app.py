@@ -270,6 +270,12 @@ def api_actualizar_posicion(ticker):
 
     cantidad = body.get("cantidad")
     precio_compra = body.get("precio_compra")
+    nombre = body.get("nombre")
+
+    if nombre is not None:
+        nombre = nombre.strip()
+        if not nombre:
+            return jsonify({"error": "nombre no puede estar vacío"}), 400
 
     if cantidad is not None:
         try:
@@ -288,6 +294,8 @@ def api_actualizar_posicion(ticker):
             return jsonify({"error": "precio_compra no puede ser negativo"}), 400
 
     with _portfolio_lock:
+        if nombre is not None:
+            PORTAFOLIO[ticker]["nombre"] = nombre
         if cantidad is not None:
             PORTAFOLIO[ticker]["cantidad"] = cantidad
         if precio_compra is not None:

@@ -327,6 +327,7 @@ body {
   font-variant-numeric: tabular-nums;
 }
 .pos-input:focus { border-color: var(--accent); }
+.pos-input-nombre { font-weight: 600; min-width: 180px; margin-bottom: 4px; }
 .div-form {
   display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
   margin: 14px 0 6px;
