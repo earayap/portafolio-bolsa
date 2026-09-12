@@ -543,7 +543,15 @@ function drawPrice(recs) {
       labels,
       datasets: [
         { label: "Cierre", data: recs.map((r) => r.close), borderColor: line,
-          backgroundColor: grad, borderWidth: 2, fill: true, pointRadius: 0, tension: 0.15 },
+          backgroundColor: grad, borderWidth: 2, fill: true, pointRadius: 0, tension: 0.15,
+          // Tramos "congelados" (volumen 0 — yfinance no registró transacciones
+          // reales esos días, algo frecuente incluso en acciones líquidas de la
+          // BCS): se marcan punteados y en gris en vez de mostrar el precio como
+          // si hubiera seguido moviéndose normalmente.
+          segment: {
+            borderColor: (ctx) => (recs[ctx.p0DataIndex]?.congelado || recs[ctx.p1DataIndex]?.congelado) ? c.tick : undefined,
+            borderDash: (ctx) => (recs[ctx.p0DataIndex]?.congelado || recs[ctx.p1DataIndex]?.congelado) ? [4, 3] : undefined,
+          } },
         { label: "MM20", data: recs.map((r) => r.ma20), borderColor: "#3b82f6",
           borderWidth: 1.2, borderDash: [5, 4], pointRadius: 0, fill: false, tension: 0.15 },
         { label: "MM50", data: recs.map((r) => r.ma50), borderColor: "#f59e0b",

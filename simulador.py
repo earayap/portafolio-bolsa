@@ -41,14 +41,27 @@ def simular(ticker, horizonte_key="6m"):
 
     ventana = records[-LOOKBACK_DIAS:]
     closes = np.array([r["close"] for r in ventana], dtype=float)
-    log_returns = np.diff(np.log(closes))
+    precio_actual = float(closes[-1])
+    fecha_actual = records[-1]["date"]
+
+    # Días "congelados" (volumen 0 — yfinance no registró transacciones
+    # reales, ver data_service._compute_indicators) no son retorno real de
+    # 0%: son un vacío de datos. Incluirlos en mu/sigma subestima la
+    # volatilidad real (visto hasta en 2 de cada 3 días de ESSBIO-C). Se
+    # excluyen de la muestra de retornos — el salto entre el último precio
+    # real antes y el primero después queda como un solo retorno grande en
+    # vez de varios días de 0% ficticio.
+    closes_reales = np.array(
+        [r["close"] for r in ventana if not r.get("congelado")], dtype=float
+    )
+    if len(closes_reales) < 31:
+        closes_reales = closes
+    log_returns = np.diff(np.log(closes_reales))
     if len(log_returns) < 30:
         return None
 
     mu = float(np.mean(log_returns))
     sigma = float(np.std(log_returns, ddof=1))
-    precio_actual = float(closes[-1])
-    fecha_actual = records[-1]["date"]
 
     rng = np.random.default_rng(_semilla(ticker, fecha_actual, horizonte_dias))
     incrementos = rng.normal(

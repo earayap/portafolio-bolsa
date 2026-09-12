@@ -310,7 +310,7 @@ def _download_yfinance(ticker):
         log.warning("Fallo al descargar %s: %s", ticker, exc)
         return None
 
-    return _interpolate_frozen_runs(_apply_live_quote(_df_to_records(df, ticker), ticker))
+    return _apply_live_quote(_df_to_records(df, ticker), ticker)
 
 
 def _fetch_live_quote(ticker):
@@ -420,7 +420,7 @@ def _download_last_price(ticker):
         recs = _df_to_records(df, ticker)
         if recs:
             log.info("%s: último precio registrado recuperado vía history(%s)", ticker, period)
-            return _interpolate_frozen_runs(_apply_live_quote(recs, ticker))
+            return _apply_live_quote(recs, ticker)
     return None
 
 
@@ -966,47 +966,6 @@ def _df_to_records(df, ticker):
     return records or None
 
 
-def _interpolate_frozen_runs(records):
-    """Corrige el cierre CONGELADO que yfinance a veces devuelve para
-    tickers de la BCS: varios días seguidos con el mismo close y
-    volumen 0 (ver _fetch_live_quote). Esas filas no son datos reales,
-    son un artefacto del feed de Yahoo, pero dejarlas en blanco tampoco
-    sirve porque el usuario quiere ver una fluctuación diaria creíble.
-
-    Para cada corrida de >=2 días congelados que tenga un cierre real
-    ANTES y DESPUÉS (o sea, ya se resolvió), se reemplaza el tramo por
-    una interpolación lineal entre ambos cierres reales. Si la corrida
-    llega hasta el final de la serie (todavía sin resolver), se deja
-    intacta porque no hay cierre futuro real con el que interpolar.
-    """
-    if not records:
-        return records
-    n = len(records)
-    i = 1
-    while i < n:
-        prev = records[i - 1]
-        if records[i]["volume"] == 0 and records[i]["close"] == prev["close"] and prev["volume"]:
-            start = i
-            j = i
-            while j < n and records[j]["volume"] == 0 and records[j]["close"] == prev["close"]:
-                j += 1
-            if j < n and (j - start) >= 2:
-                close_before = prev["close"]
-                close_after = records[j]["close"]
-                span = j - start + 1
-                for k in range(start, j):
-                    frac = (k - start + 1) / span
-                    interp = round(close_before + (close_after - close_before) * frac, 2)
-                    records[k]["close"] = interp
-                    records[k]["open"] = interp
-                    records[k]["high"] = interp
-                    records[k]["low"] = interp
-            i = j
-        else:
-            i += 1
-    return records
-
-
 def _f(v):
     try:
         v = float(v)
@@ -1350,7 +1309,14 @@ def start_scheduler():
 
 
 def _compute_indicators(records):
-    """Agrega variación % diaria y medias móviles a cada registro."""
+    """Agrega variación % diaria, medias móviles y la marca "congelado" a
+    cada registro. "congelado" (volumen 0) señala un día sin transacciones
+    reales — yfinance a veces devuelve así varias semanas seguidas para
+    tickers de la BCS (visto incluso en nombres líquidos como Quiñenco).
+    Antes esos tramos se rellenaban con una interpolación lineal que
+    fabricaba una tendencia de precio que nunca ocurrió; ahora se muestra
+    el dato real (plano) y se deja que el frontend lo marque visualmente
+    en vez de inventar una variación diaria creíble pero falsa."""
     closes = [r["close"] for r in records]
     prev = None
     for i, r in enumerate(records):
@@ -1359,6 +1325,7 @@ def _compute_indicators(records):
         prev = c
         r["ma20"] = round(sum(closes[max(0, i - 19):i + 1]) / min(i + 1, 20), 2)
         r["ma50"] = round(sum(closes[max(0, i - 49):i + 1]) / min(i + 1, 50), 2)
+        r["congelado"] = not r.get("volume")
     return records
 
 

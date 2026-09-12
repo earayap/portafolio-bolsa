@@ -169,7 +169,16 @@ def evaluate(ticker):
     returns = _daily_returns(closes)
     bench_returns = _daily_returns(bench_closes)
 
-    vol = _annualized_vol(returns)
+    # Días "congelados" (sin transacciones reales — ver
+    # data_service._compute_indicators) no son un retorno real de 0%, son un
+    # vacío de datos; incluirlos en el cálculo de volatilidad/Sharpe la
+    # subestima. Se recalculan los retornos saltándose esos días (el beta
+    # vs. el benchmark se deja con la serie completa: acortar solo la del
+    # ticker desalinearía las fechas entre ambas series).
+    closes_reales = [r["close"] for r in records if not r.get("congelado")]
+    returns_reales = _daily_returns(closes_reales) if len(closes_reales) >= 31 else returns
+
+    vol = _annualized_vol(returns_reales)
     ret_anual = _annualized_return(closes)
     tpm = data_service.get_indicadores().get("tpm", {}).get("value")
     tasa_libre_riesgo = (tpm / 100) if tpm is not None else 0.0
