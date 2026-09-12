@@ -15,6 +15,7 @@ import backtest
 import simulador
 import valor_empresa
 import comprobantes
+import asistente
 
 app = Flask(__name__)
 
@@ -90,21 +91,6 @@ def distribucion():
     return render_template("distribucion.html")
 
 
-@app.route("/screener")
-def screener_page():
-    return render_template("screener.html")
-
-
-@app.route("/backtest")
-def backtest_page():
-    return render_template("backtest.html")
-
-
-@app.route("/simulador")
-def simulador_page():
-    return render_template("simulador.html", portfolio=PORTAFOLIO)
-
-
 @app.route("/posiciones")
 def posiciones_page():
     return render_template("posiciones.html", portfolio=PORTAFOLIO)
@@ -118,6 +104,11 @@ def valor_empresa_page():
 @app.route("/eeff-graficos")
 def eeff_graficos_page():
     return render_template("eeff_graficos.html")
+
+
+@app.route("/asistente")
+def asistente_page():
+    return render_template("asistente.html")
 
 
 @app.route("/api/status")
@@ -277,6 +268,22 @@ def api_actualizar_posicion(ticker):
         if not nombre:
             return jsonify({"error": "nombre no puede estar vacío"}), 400
 
+    # precio_manual es distinto de cantidad/precio_compra: "" significa
+    # "borrar el override y volver a usar el precio de Yahoo Finance", no
+    # "no tocar" — por eso se distingue con `in body` en vez de `is not None`.
+    precio_manual = "__unset__"
+    if "precio_manual" in body:
+        raw = body.get("precio_manual")
+        if raw in (None, ""):
+            precio_manual = None
+        else:
+            try:
+                precio_manual = float(raw)
+            except (TypeError, ValueError):
+                return jsonify({"error": "precio_manual debe ser un número"}), 400
+            if precio_manual < 0:
+                return jsonify({"error": "precio_manual no puede ser negativo"}), 400
+
     if cantidad is not None:
         try:
             cantidad = int(cantidad)
@@ -300,6 +307,11 @@ def api_actualizar_posicion(ticker):
             PORTAFOLIO[ticker]["cantidad"] = cantidad
         if precio_compra is not None:
             PORTAFOLIO[ticker]["precio_compra"] = precio_compra
+        if precio_manual != "__unset__":
+            if precio_manual is None:
+                PORTAFOLIO[ticker].pop("precio_manual", None)
+            else:
+                PORTAFOLIO[ticker]["precio_manual"] = precio_manual
         _save_portfolio()
 
     return jsonify(data_service.get_summary(ticker) or {"ok": True})
@@ -478,10 +490,18 @@ def api_operaciones():
 @app.route("/api/comprobantes/sync", methods=["POST"])
 def api_comprobantes_sync():
     """Escanea la carpeta de comprobantes montada (ver
-    config.COMPROBANTES_DIR) e importa las operaciones nuevas a la tabla
-    `operaciones`. No toca portfolio.json — para eso ver
-    /api/posiciones/recalculo_preview y /api/posiciones/recalculo_aplicar."""
-    return jsonify(comprobantes.sync_comprobantes())
+    config.COMPROBANTES_DIR), importa las operaciones nuevas a la tabla
+    `operaciones` y aplica de inmediato el recálculo a portfolio.json
+    (agrega posiciones nuevas, descuenta ventas hasta dejarlas en 0) — no
+    requiere pasar por /api/posiciones/recalculo_aplicar a mano. El preview
+    (/api/posiciones/recalculo_preview) sigue disponible para revisar o
+    reaplicar manualmente si hace falta."""
+    resultado = comprobantes.sync_comprobantes()
+    resultado["posiciones_actualizadas"] = []
+    if resultado.get("operaciones_nuevas"):
+        calculado = _aplicar_recalculo_posiciones()
+        resultado["posiciones_actualizadas"] = list(calculado.keys())
+    return jsonify(resultado)
 
 
 @app.route("/api/posiciones/recalculo_preview")
@@ -513,19 +533,17 @@ def api_recalculo_preview():
     return jsonify(preview)
 
 
-@app.route("/api/posiciones/recalculo_aplicar", methods=["POST"])
-def api_recalculo_aplicar():
+def _aplicar_recalculo_posiciones(tickers=None):
     """Aplica a portfolio.json el recálculo de cantidad/precio_compra desde
-    `operaciones` para los tickers indicados (o todos, si no se especifica).
-    Los tickers nuevos (comprados en algún comprobante pero ausentes de
-    portfolio.json) se agregan con el ticker como nombre por defecto —
-    editable después a mano en /posiciones."""
-    body = request.get_json(silent=True) or {}
-    tickers_pedidos = body.get("tickers")
-
+    `operaciones` (costo promedio ponderado) para los tickers indicados, o
+    todos si no se especifica. Los tickers nuevos (comprados en algún
+    comprobante pero ausentes de portfolio.json) se agregan con el ticker
+    como nombre por defecto — editable después a mano en /posiciones.
+    Compartido entre el apply manual (/api/posiciones/recalculo_aplicar) y
+    el auto-apply que corre tras cada /api/comprobantes/sync."""
     calculado = data_service.recalcular_posiciones()
-    if tickers_pedidos:
-        calculado = {t: v for t, v in calculado.items() if t in tickers_pedidos}
+    if tickers:
+        calculado = {t: v for t, v in calculado.items() if t in tickers}
 
     with _portfolio_lock:
         for ticker, datos in calculado.items():
@@ -533,10 +551,34 @@ def api_recalculo_aplicar():
                 PORTAFOLIO[ticker] = {"nombre": ticker.replace(".SN", ""), "cantidad": 0, "precio_compra": 0}
             PORTAFOLIO[ticker]["cantidad"] = datos["cantidad"]
             PORTAFOLIO[ticker]["precio_compra"] = round(datos["precio_compra"], 4)
-        _save_portfolio()
-        data_service.set_portfolio(PORTAFOLIO)
+        if calculado:
+            _save_portfolio()
+            data_service.set_portfolio(PORTAFOLIO)
 
+    return calculado
+
+
+@app.route("/api/posiciones/recalculo_aplicar", methods=["POST"])
+def api_recalculo_aplicar():
+    """Aplica el recálculo a los tickers indicados en el body (o todos)."""
+    body = request.get_json(silent=True) or {}
+    calculado = _aplicar_recalculo_posiciones(body.get("tickers"))
     return jsonify({"aplicados": list(calculado.keys())})
+
+
+@app.route("/api/asistente/chat", methods=["POST"])
+def api_asistente_chat():
+    """Chat con el asistente del portafolio (Claude API). El cliente manda el
+    historial completo de la conversación (la API es sin estado); acá solo se
+    agrega el turno nuevo y se ejecutan las herramientas que pida Claude."""
+    body = request.get_json(silent=True) or {}
+    mensaje = (body.get("message") or "").strip()
+    historial = body.get("history") or []
+    if not mensaje:
+        return jsonify({"error": "message no puede estar vacío"}), 400
+
+    texto, nuevo_historial = asistente.responder(mensaje, historial, PORTAFOLIO)
+    return jsonify({"reply": texto, "history": nuevo_historial})
 
 
 # --------------------------------------------------------------------------- #

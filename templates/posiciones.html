@@ -19,12 +19,10 @@
         <nav class="topnav">
             <a href="/">Resumen</a>
             <a href="/distribucion">Distribución</a>
-            <a href="/screener">Screener</a>
             <a href="/valor-empresa">Valor Empresa</a>
-            <a href="/backtest">Backtest</a>
-            <a href="/simulador">Simulador</a>
             <a href="/posiciones" class="active">Posiciones</a>
             <a href="/eeff-graficos">EEFF Trimestrales</a>
+            <a href="/asistente">Asistente</a>
         </nav>
         <div class="topbar-actions">
             <div class="market-clock" id="clock"></div>
@@ -56,6 +54,7 @@
                             <th>Acción</th>
                             <th>Cantidad</th>
                             <th>Precio de compra (CLP)</th>
+                            <th title="Reemplaza el último cierre de Yahoo Finance en la valorización — para acciones ilíquidas que no transan seguido. Se activa/desactiva con el checkbox 'Manual'; el precio actualizado por Yahoo Finance no lo pisa mientras esté activo.">Precio manual (opcional)</th>
                             <th></th>
                         </tr>
                     </thead>
@@ -71,15 +70,16 @@
             <p class="dist-intro">
                 Compras y ventas importadas automáticamente de los comprobantes PDF
                 de Vector Capital e Itaú (carpeta montada de solo lectura). "Sincronizar"
-                lee los PDF nuevos y los agrega al historial de abajo — no toca las
-                posiciones. "Recalcular posiciones" compara la cantidad/precio de compra
-                promedio que resulta de todo el historial contra lo que hay hoy en
-                <em>Posiciones</em>, y deja elegir qué aplicar.
+                lee los PDF nuevos, los agrega al historial de abajo, y aplica de
+                inmediato el recálculo de cantidad/precio de compra promedio a
+                <em>Posiciones</em> (agrega acciones nuevas, descuenta ventas totales
+                a 0). "Recalcular posiciones" queda como herramienta manual por si
+                hace falta revisar o reaplicar algo puntual.
             </p>
 
             <div class="div-form">
                 <button type="button" class="btn" id="syncBtn">Sincronizar comprobantes</button>
-                <button type="button" class="btn btn-ghost" id="recalcBtn">Recalcular posiciones</button>
+                <button type="button" class="btn btn-ghost" id="recalcBtn">Recalcular posiciones (manual)</button>
             </div>
             <p id="syncStatus" class="div-error"></p>
 

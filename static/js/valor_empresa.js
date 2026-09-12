@@ -2,6 +2,9 @@
 
 const fmtCompact = (v) =>
   v == null ? "—" : new Intl.NumberFormat("es-CL", { notation: "compact", maximumFractionDigits: 1 }).format(v);
+const fmtCLP = (v) =>
+  v == null ? "—" : "$" + new Intl.NumberFormat("es-CL", { maximumFractionDigits: 2 }).format(v);
+const fmtPct = (v) => (v == null ? "—" : (v >= 0 ? "+" : "") + v.toFixed(1) + "%");
 const cls = (v) => (v == null ? "" : v >= 0 ? "pos" : "neg");
 
 async function getJSON(url) {
@@ -46,6 +49,9 @@ function renderTable(rows, names) {
         <td class="${cls(r.ev_ebitda != null ? 8 - r.ev_ebitda : null)}">${r.ev_ebitda != null ? r.ev_ebitda + "x" : "—"}</td>
         <td class="${cls(r.ev_revenue != null ? 2 - r.ev_revenue : null)}">${r.ev_revenue != null ? r.ev_revenue + "x" : "—"}</td>
         <td class="${cls(r.ebitda)}">${fmtCompact(r.ebitda)}</td>
+        <td>${fmtCLP(r.precio_actual)}</td>
+        <td>${fmtCLP(r.precio_justo)}</td>
+        <td class="${cls(r.diferencia_pct)}">${fmtPct(r.diferencia_pct)}</td>
         <td>${r.sector || "—"}</td>
         <td>${r.fuente || "—"}</td>
         <td class="st-razones">${(r.razones || []).join(" · ") || "—"}</td>

@@ -591,7 +591,9 @@ def list_dividendos_todos(ticker=None):
     tickers = [ticker] if ticker else list(_PORTFOLIO.keys())
     registros = []
     for t in tickers:
-        for d in DIVIDENDOS_BCS.get(t, []):
+        bcs = DIVIDENDOS_BCS.get(t, [])
+        manuales = list_manual_dividends(t)
+        for d in bcs:
             fecha_ref = d.get("date_ex") or d["date"]
             cantidad = cantidad_al(t, fecha_ref)
             registros.append({
@@ -599,12 +601,31 @@ def list_dividendos_todos(ticker=None):
                 "fuente": "BCS", "cantidad": cantidad,
                 "total": round(d["amount"] * cantidad, 2),
             })
-        for d in list_manual_dividends(t):
+        for d in manuales:
             cantidad = cantidad_al(t, d["date"])
             registros.append({
                 **d, "ticker": t, "fuente": "manual", "cantidad": cantidad,
                 "total": round(d["amount"] * cantidad, 2),
             })
+        # Sin dato "conocido" (BCS ni manual) para este ticker: cae al
+        # historial de dividendos cacheado de yfinance — mismo fallback que
+        # get_dividends_total (ver docstring ahí). Sin esto, tickers que
+        # dependen 100% de yfinance quedaban invisibles en /posiciones y en
+        # el panel de dividendos del Resumen aunque sí se les cobrara y
+        # contara en el dividend yield del screener.
+        if not bcs and not manuales:
+            with get_conn() as conn:
+                rows = conn.execute(
+                    "SELECT date, amount FROM dividends WHERE ticker = ? ORDER BY date DESC",
+                    (t,),
+                ).fetchall()
+            for r in rows:
+                cantidad = cantidad_al(t, r["date"])
+                registros.append({
+                    "id": None, "ticker": t, "date": r["date"], "amount": r["amount"],
+                    "fuente": "yfinance", "cantidad": cantidad,
+                    "total": round((r["amount"] or 0) * cantidad, 2),
+                })
 
     registros.sort(key=lambda r: (r["date"], r["ticker"]), reverse=True)
     return registros
@@ -1375,6 +1396,7 @@ def get_history(ticker):
         "name": info.get("nombre", ticker),
         "cantidad": info.get("cantidad", 0),
         "precio_compra": info.get("precio_compra", 0),
+        "precio_manual": info.get("precio_manual"),
         "source": source,
         "last_update": meta.get("last_update"),
         "last_price_date": last_date,
@@ -1394,13 +1416,19 @@ def get_summary(ticker):
     first_year = recs[max(0, len(recs) - 252)]  # ~1 año bursátil
     closes = [r["close"] for r in recs]
 
-    # Valorización de la posición
+    # Valorización de la posición. Si hay un precio_manual cargado (acciones
+    # ilíquidas donde el último cierre de Yahoo Finance queda desactualizado
+    # por falta de transacciones), reemplaza el precio vigente para efectos
+    # de valorización — pero no reescribe la serie histórica real (records),
+    # que sigue viniendo de yfinance para MM20/MM50, 52w, retorno 1 año, etc.
+    precio_manual = data.get("precio_manual")
+    last_close = precio_manual if precio_manual is not None else last["close"]
     cantidad = data["cantidad"] or 0
     precio_compra = data["precio_compra"] or 0
     invertido = round(cantidad * precio_compra, 2)
-    valor_mercado = round(cantidad * last["close"], 2)
+    valor_mercado = round(cantidad * last_close, 2)
     pnl = round(valor_mercado - invertido, 2)
-    pnl_pct = round((last["close"] - precio_compra) / precio_compra * 100, 2) if precio_compra else 0.0
+    pnl_pct = round((last_close - precio_compra) / precio_compra * 100, 2) if precio_compra else 0.0
 
     # Distancia entre MM20 y MM50, hoy y hace ~5 ruedas, para poder avisar
     # cuando un cruce dorado/de la muerte está cerca (sin predecir cuándo:
@@ -1417,8 +1445,9 @@ def get_summary(ticker):
         "ticker": ticker,
         "name": data["name"],
         "source": data["source"],
-        "last_close": last["close"],
-        "change_pct": last["change_pct"],
+        "last_close": last_close,
+        "precio_manual": precio_manual,
+        "change_pct": last["change_pct"] if precio_manual is None else 0.0,
         "volume": last["volume"],
         "high": last["high"],
         "low": last["low"],
@@ -1427,7 +1456,7 @@ def get_summary(ticker):
         "return_1y": round((last["close"] - first_year["close"]) / first_year["close"] * 100, 2)
         if first_year["close"] else 0.0,
         "last_date": last["date"],
-        "stale": data["stale"],
+        "stale": data["stale"] and precio_manual is None,
         "days_old": data["days_old"],
         "n_points": len(recs),
         # Posición del portafolio

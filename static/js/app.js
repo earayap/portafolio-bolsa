@@ -53,6 +53,8 @@ const moneySigned = (v) =>
 
 /* Etiqueta de aviso para datos no vigentes / estimados */
 function staleBadge(x) {
+  if (x.precio_manual != null)
+    return `<span class="badge badge-est" title="Precio ingresado a mano en /posiciones, reemplaza el último cierre de Yahoo Finance">✎ Manual</span>`;
   if (x.source === "synthetic")
     return `<span class="badge badge-est" title="Sin datos reales disponibles; valor estimado">⚠ Estimado</span>`;
   if (x.stale) {
@@ -109,7 +111,12 @@ async function loadStocks() {
   } catch (_) {
     state.totalAportado = 0;
   }
+  await loadIndicadores();
+  await loadDividendos();
   renderKPIs();
+  renderMarketPanel();
+  renderMovers();
+  renderDividendPanel();
   renderList();
   if (state.stocks.length) selectStock(state.stocks[0].ticker);
 }
@@ -155,6 +162,14 @@ function renderKPIs() {
       cls: cls(retornoAportes),
     });
   }
+
+  const { total12m, totalAll } = dividendTotals();
+  cards.push({
+    label: "Dividendos recibidos",
+    value: money(total12m),
+    sub: `últimos 12 meses · ${money(totalAll)} histórico`,
+  });
+
   document.getElementById("kpis").innerHTML = cards
     .map(
       (c) => `<div class="kpi"><div class="label">${c.label}</div>
@@ -162,6 +177,151 @@ function renderKPIs() {
       <div class="sub ${c.cls || ""}">${c.sub || ""}</div></div>`
     )
     .join("");
+}
+
+/* ---------- Contexto de mercado (UF, dólar, TPM, cobre, IPC, UTM) ---------- */
+/* pctChange=false para tpm/ipc: ya son porcentajes, así que "variación %"
+   sobre su propio valor (p.ej. de -0.3% a +0.2%) da un número sin sentido
+   económico (podría ser -166%). Para esos dos basta con mostrar la fecha. */
+const INDIC_META = {
+  uf: { label: "UF", fmt: (v) => "$" + fmtCLP(v), pctChange: true },
+  dolar: { label: "Dólar (USD/CLP)", fmt: (v) => "$" + fmtCLP(v), pctChange: true },
+  tpm: { label: "TPM", fmt: (v) => v.toFixed(2) + "%", pctChange: false },
+  libra_cobre: { label: "Cobre (USD/lb)", fmt: (v) => "US$" + v.toFixed(2), pctChange: true },
+  ipc: { label: "IPC (var. mensual)", fmt: (v) => (v >= 0 ? "+" : "") + v.toFixed(2) + "%", pctChange: false },
+  utm: { label: "UTM", fmt: (v) => "$" + fmtCLP(v), pctChange: true },
+};
+const INDIC_ORDER = ["uf", "dolar", "tpm", "libra_cobre", "ipc", "utm"];
+
+async function loadIndicadores() {
+  state.indicadores = {};
+  await Promise.all(
+    INDIC_ORDER.map(async (code) => {
+      try {
+        state.indicadores[code] = await getJSON(`/api/indicadores/${code}?limit=2`);
+      } catch (_) {
+        state.indicadores[code] = [];
+      }
+    })
+  );
+}
+
+function renderMarketPanel() {
+  const grid = document.getElementById("indicGrid");
+  if (!grid) return;
+  let latestDate = null;
+  const cells = INDIC_ORDER.map((code) => {
+    const meta = INDIC_META[code];
+    const hist = state.indicadores[code] || [];
+    const last = hist[hist.length - 1];
+    if (!last) {
+      return `<div class="stat"><div class="s-label">${meta.label}</div><div class="s-value muted">—</div></div>`;
+    }
+    if (!latestDate || last.date > latestDate) latestDate = last.date;
+    const prev = hist[hist.length - 2];
+    let sub = last.date;
+    let subCls = "";
+    if (meta.pctChange && prev && prev.value) {
+      const chg = ((last.value - prev.value) / prev.value) * 100;
+      subCls = cls(chg);
+      sub = `${pct(chg)} · ${last.date}`;
+    }
+    return `<div class="stat"><div class="s-label">${meta.label}</div>
+      <div class="s-value">${meta.fmt(last.value)}</div>
+      <div class="s-sub ${subCls}">${sub}</div></div>`;
+  });
+  grid.innerHTML = cells.join("");
+  const updEl = document.getElementById("marketUpdated");
+  if (updEl) updEl.textContent = latestDate ? `Al ${latestDate}` : "";
+}
+
+/* ---------- Detalle completo de la cartera (cantidad, precio, variación, peso) ---------- */
+function renderMovers() {
+  const body = document.getElementById("moversBody");
+  if (!body) return;
+  const s = state.stocks;
+  const totalVal = s.reduce((a, x) => a + (x.valor_mercado || 0), 0);
+  const rows = [...s].sort((a, b) => (b.valor_mercado || 0) - (a.valor_mercado || 0));
+
+  body.innerHTML = rows.length
+    ? rows
+        .map((x) => {
+          const peso = totalVal ? (x.valor_mercado / totalVal) * 100 : 0;
+          const precio = x.precio_manual != null ? x.precio_manual : x.last_close;
+          const variacion = x.precio_manual != null ? "—" : pct(x.change_pct);
+          const varCls = x.precio_manual != null ? "" : cls(x.change_pct);
+          return `<tr>
+            <td><div class="st-name">${x.name} ${staleBadge(x)}</div><div class="st-ticker">${x.ticker} ${signalBadge(x.ticker)}</div></td>
+            <td>${fmtInt(x.cantidad || 0)}</td>
+            <td>$${fmtCLP(precio)}</td>
+            <td class="${varCls}">${variacion}</td>
+            <td>${money(x.valor_mercado || 0)}</td>
+            <td>${peso.toFixed(1)}%</td>
+          </tr>`;
+        })
+        .join("")
+    : `<tr><td colspan="6" class="legend-empty">Sin datos.</td></tr>`;
+
+  const countEl = document.getElementById("moversCount");
+  if (countEl) countEl.textContent = `${rows.length} posición${rows.length === 1 ? "" : "es"}`;
+}
+
+/* ---------- Dividendos (cobrados + próximos declarados) ---------- */
+function isoMinus365(isoDate) {
+  const d = new Date(isoDate + "T00:00:00");
+  d.setDate(d.getDate() - 365);
+  return d.toISOString().slice(0, 10);
+}
+
+async function loadDividendos() {
+  try {
+    state.dividendos = await getJSON("/api/dividendos");
+  } catch (_) {
+    state.dividendos = [];
+  }
+}
+
+/* Separa lo ya pagado (fecha <= hoy) de lo declarado a futuro, y suma lo
+   cobrado en los últimos 12 meses y en total histórico. Reutilizado por el
+   KPI y por el panel de dividendos para no calcular el mismo total dos veces. */
+function dividendTotals() {
+  const rows = state.dividendos || [];
+  const hoy = new Date().toISOString().slice(0, 10);
+  const pagados = rows.filter((d) => d.date <= hoy);
+  const declarados = rows.filter((d) => d.date > hoy);
+  const desde = isoMinus365(hoy);
+  const total12m = pagados.filter((d) => d.date >= desde).reduce((a, d) => a + d.total, 0);
+  const totalAll = pagados.reduce((a, d) => a + d.total, 0);
+  return { pagados, declarados, total12m, totalAll };
+}
+
+function renderDividendPanel() {
+  const body = document.getElementById("divRecentBody");
+  if (!body) return;
+  const { pagados, declarados, total12m } = dividendTotals();
+
+  document.getElementById("divTotal12m").textContent = `${money(total12m)} · últimos 12 meses`;
+
+  const nextEl = document.getElementById("divNext");
+  if (declarados.length) {
+    const n = [...declarados].sort((a, b) => a.date.localeCompare(b.date))[0];
+    const stock = state.stocks.find((x) => x.ticker === n.ticker);
+    nextEl.textContent = `Próximo declarado: ${stock ? stock.name : n.ticker} · ${n.date} · $${n.amount}/acción`;
+  } else {
+    nextEl.textContent = "";
+  }
+
+  const recent = pagados.slice(0, 8);
+  body.innerHTML = recent.length
+    ? recent
+        .map((d) => {
+          const stock = state.stocks.find((x) => x.ticker === d.ticker);
+          const name = stock ? stock.name : d.ticker;
+          return `<tr><td><div class="st-name">${name}</div><div class="st-ticker">${d.ticker}</div></td>
+            <td>${d.date}</td><td>$${d.amount}</td><td>${money(d.total)}</td></tr>`;
+        })
+        .join("")
+    : `<tr><td colspan="4" class="legend-empty">Todavía no hay dividendos registrados.</td></tr>`;
 }
 
 /* ---------- Listado lateral ---------- */
@@ -240,9 +400,12 @@ function renderDetail(data) {
     proxEl.className = "chip chip-ma chip-ma-hidden";
   }
 
-  // Banner de aviso cuando el precio no está vigente o es estimado
+  // Banner de aviso cuando el precio no está vigente, es estimado, o es manual
   const warnEl = document.getElementById("detailWarn");
-  if (data.source === "synthetic") {
+  if (data.precio_manual != null) {
+    warnEl.className = "detail-warn est show";
+    warnEl.innerHTML = `✎ <strong>Precio manual.</strong> Reemplaza el último cierre de Yahoo Finance (<strong>${data.last_price_date}</strong>: $${fmtCLP(last.close || 0)}) — editable en <a href="/posiciones">Posiciones</a>.`;
+  } else if (data.source === "synthetic") {
     warnEl.className = "detail-warn est show";
     warnEl.innerHTML = `⚠ <strong>Precio estimado.</strong> Yahoo Finance no entrega datos para esta acción (baja liquidez o deslistada); los valores son referenciales, no nominales de la bolsa.`;
   } else if (data.stale) {
@@ -254,10 +417,11 @@ function renderDetail(data) {
     warnEl.innerHTML = "";
   }
 
-  document.getElementById("detailPrice").textContent = "$" + fmtCLP(last.close || 0);
+  const precioActual = data.precio_manual != null ? data.precio_manual : (last.close || 0);
+  document.getElementById("detailPrice").textContent = "$" + fmtCLP(precioActual);
   const chEl = document.getElementById("detailChange");
-  chEl.textContent = pct(last.change_pct || 0);
-  chEl.className = "change " + cls(last.change_pct || 0);
+  chEl.textContent = data.precio_manual != null ? "—" : pct(last.change_pct || 0);
+  chEl.className = "change " + (data.precio_manual != null ? "" : cls(last.change_pct || 0));
 
   renderStats(data);
   drawPrice(recs);

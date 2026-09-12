@@ -17,4 +17,10 @@ services:
       - "C:/Users/earay/OneDrive/Desktop/comprobantes:/comprobantes:ro"
     environment:
       - PORT=8000
+      # El contenedor no puede llegar a localhost:11434 (ese "localhost" es el
+      # propio contenedor) — host.docker.internal apunta a la máquina host,
+      # donde corre `ollama serve`. Ver asistente.py.
+      - OLLAMA_HOST=http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped

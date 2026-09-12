@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Asistente · Bolsa de Santiago</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">
+            <div class="brand-mark">💬</div>
+            <div class="brand-text">
+                <h1>Asistente</h1>
+                <span>Bolsa de Comercio de Santiago</span>
+            </div>
+        </div>
+        <nav class="topnav">
+            <a href="/">Resumen</a>
+            <a href="/distribucion">Distribución</a>
+            <a href="/valor-empresa">Valor Empresa</a>
+            <a href="/posiciones">Posiciones</a>
+            <a href="/eeff-graficos">EEFF Trimestrales</a>
+            <a href="/asistente" class="active">Asistente</a>
+        </nav>
+        <div class="topbar-actions">
+            <div class="market-clock" id="clock"></div>
+            <button class="btn btn-ghost btn-icon" id="themeBtn" title="Cambiar tema">☀️</button>
+        </div>
+    </header>
+
+    <main class="layout">
+        <p class="dist-intro">
+            Pregúntale a un modelo local (Ollama, corre en tu propia GPU — sin costo de
+            API ni datos saliendo de tu equipo) sobre tu cartera: posiciones, dividendos,
+            señales del screener, valor de empresa, backtest o el simulador de Monte
+            Carlo. Consulta tus datos reales antes de responder.
+        </p>
+
+        <section class="chat-card">
+            <div class="chat-log" id="chatLog">
+                <div class="chat-msg chat-msg-bot">
+                    <div class="chat-bubble">
+                        Hola. Puedo revisar tus posiciones, dividendos, señales del
+                        screener, valoración por EV y correr el simulador de Monte Carlo.
+                        ¿Qué necesitas saber?
+                    </div>
+                </div>
+            </div>
+            <form id="chatForm" class="chat-input-row">
+                <input type="text" id="chatInput" placeholder="Ej: ¿cómo va Quiñenco?" autocomplete="off" required>
+                <button type="submit" class="btn" id="chatSend">Enviar</button>
+            </form>
+            <p id="chatError" class="div-error"></p>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <span>Modelo local vía Ollama — no se envían datos a servicios externos.</span>
+        <span id="lastUpdate"></span>
+    </footer>
+
+    <script src="{{ url_for('static', filename='js/asistente.js') }}"></script>
+</body>
+</html>

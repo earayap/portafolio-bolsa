@@ -20,6 +20,7 @@ async function postJSON(url, body, method = "POST") {
 let PORTFOLIO_NAMES = {};
 
 function renderPosRow(ticker, info) {
+  const manualActivo = info.precio_manual != null;
   return `<tr data-ticker="${ticker}">
     <td>
       <input type="text" class="pos-input pos-input-nombre" data-field="nombre" value="${info.nombre}">
@@ -27,6 +28,14 @@ function renderPosRow(ticker, info) {
     </td>
     <td><input type="number" class="pos-input" data-field="cantidad" min="0" step="1" value="${info.cantidad}"></td>
     <td><input type="number" class="pos-input" data-field="precio_compra" min="0" step="0.01" value="${info.precio_compra}"></td>
+    <td class="pos-manual-cell">
+      <input type="number" class="pos-input" data-field="precio_manual" min="0" step="0.01" placeholder="—"
+        value="${info.precio_manual ?? ""}" ${manualActivo ? "" : "disabled"}>
+      <label class="pos-manual-toggle" title="Mientras esté marcado, este precio reemplaza el de Yahoo Finance y no se actualiza solo — hay que desmarcarlo para volver al automático">
+        <input type="checkbox" class="pos-manual-check" data-field="precio_manual_activo" ${manualActivo ? "checked" : ""}>
+        Manual
+      </label>
+    </td>
     <td><button class="btn btn-save" data-ticker="${ticker}">Guardar</button></td>
   </tr>`;
 }
@@ -37,6 +46,13 @@ function renderPosTable(portfolio) {
   body.querySelectorAll(".btn-save").forEach((btn) => {
     btn.addEventListener("click", () => savePosicion(btn.dataset.ticker));
   });
+  body.querySelectorAll(".pos-manual-check").forEach((chk) => {
+    chk.addEventListener("change", () => {
+      const input = chk.closest("tr").querySelector('[data-field="precio_manual"]');
+      input.disabled = !chk.checked;
+      if (chk.checked) input.focus();
+    });
+  });
 }
 
 async function savePosicion(ticker) {
@@ -44,12 +60,14 @@ async function savePosicion(ticker) {
   const nombre = row.querySelector('[data-field="nombre"]').value;
   const cantidad = row.querySelector('[data-field="cantidad"]').value;
   const precio_compra = row.querySelector('[data-field="precio_compra"]').value;
+  const manualActivo = row.querySelector('[data-field="precio_manual_activo"]').checked;
+  const precio_manual = manualActivo ? row.querySelector('[data-field="precio_manual"]').value : "";
   const btn = row.querySelector(".btn-save");
   const original = btn.textContent;
   btn.textContent = "Guardando…";
   btn.disabled = true;
   try {
-    await postJSON(`/api/posiciones/${encodeURIComponent(ticker)}`, { nombre, cantidad, precio_compra });
+    await postJSON(`/api/posiciones/${encodeURIComponent(ticker)}`, { nombre, cantidad, precio_compra, precio_manual });
     btn.textContent = "✓ Guardado";
   } catch (e) {
     btn.textContent = "Error";
@@ -100,9 +118,15 @@ async function syncComprobantes() {
     if (r.error) {
       status.textContent = r.error;
     } else {
+      const cambios = r.posiciones_actualizadas || [];
       status.textContent =
-        `${r.archivos_vistos} archivo(s) revisados, ${r.operaciones_nuevas} operación(es) nueva(s) importada(s).` +
+        `${r.archivos_vistos} archivo(s) revisados, ${r.operaciones_nuevas} operación(es) nueva(s) importada(s)` +
+        (cambios.length ? `, ${cambios.length} posición(es) actualizada(s). Recargando…` : ".") +
         (r.sin_parsear.length ? ` ${r.sin_parsear.length} sin reconocer: ${r.sin_parsear.join(", ")}` : "");
+      if (cambios.length) {
+        setTimeout(() => window.location.reload(), 1500);
+        return;
+      }
       await loadOperaciones();
     }
   } catch (e) {
@@ -223,7 +247,9 @@ function renderDivRow(d) {
   const name = PORTFOLIO_NAMES[d.ticker] || d.ticker;
   const accion = d.fuente === "manual"
     ? `<button class="btn btn-ghost btn-del" data-id="${d.id}" title="Eliminar">🗑️</button>`
-    : `<span class="badge badge-est" title="Dato oficial de la BCS, no editable desde acá">BCS</span>`;
+    : d.fuente === "yfinance"
+      ? `<span class="badge badge-old" title="No hay dato oficial de la BCS para este ticker; se usa el historial de Yahoo Finance">Yahoo</span>`
+      : `<span class="badge badge-est" title="Dato oficial de la BCS, no editable desde acá">BCS</span>`;
   return `<tr data-id="${d.id ?? ""}">
     <td><div class="st-name">${name}</div><div class="st-ticker">${d.ticker}</div></td>
     <td>${d.date}</td>

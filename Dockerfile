@@ -18,5 +18,10 @@ RUN mkdir -p /app/data
 
 EXPOSE 8000
 
-# 2 workers, timeout amplio para la descarga inicial de datos
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "120", "app:app"]
+# 1 worker (single process) con varios threads: PORTAFOLIO/_PORTFOLIO viven
+# en memoria de proceso, así que con >1 worker cada proceso tenía su propia
+# copia y una escritura en un worker quedaba invisible para el otro hasta
+# reiniciar el contenedor (posiciones "no se actualizaban" de forma
+# intermitente). Los threads sí comparten memoria, así que mantienen algo
+# de concurrencia sin ese problema.
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "1", "--threads", "4", "--timeout", "120", "app:app"]

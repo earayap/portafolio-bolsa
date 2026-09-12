@@ -4,14 +4,19 @@ A diferencia del P/E (usado en screener.py), el EV/EBITDA y el EV/Ventas
 descuentan la deuda neta de cada empresa, así que comparan negocios con
 distinta estructura de capital (una industrial muy apalancada vs. una con
 caja neta) de forma más justa. Mismo enfoque "cash flow real, sin
-narrativa" del resto del proyecto: solo el snapshot actual de yfinance (ver
-fundamentales.py), sin proyecciones. No se mezcla con el score de riesgo/
-retorno del screener — es una lectura de valoración pura.
+narrativa" del resto del proyecto: sin proyecciones. No se mezcla con el
+score de riesgo/retorno del screener — es una lectura de valoración pura.
 
-Cuando yfinance no trae el ratio para un ticker ilíquido de la BCS, se
-reconstruye a mano desde el último EEFF trimestral ingresado en
-/posiciones (resultado operacional + D&A, deuda financiera, efectivo,
-ingresos — transcritos del PDF de la CMF). Ver _desde_manual().
+Fuente preferida: el EEFF trimestral cargado a mano en /posiciones
+(resultado operacional + D&A, deuda financiera, efectivo, ingresos —
+transcritos del informe auditado de la CMF), agregado a TTM (últimos 4
+trimestres) cuando hay suficiente historial cargado. Mismo criterio que
+dividendos_bcs.py: para acciones chilenas el dato oficial tiene
+precedencia sobre yfinance, que puede traer EV/EBITDA poco confiable para
+tickers ilíquidos de la BCS (market cap mal estimado, EBITDA TTM que no
+calza con el calendario fiscal chileno). yfinance solo se usa como
+respaldo cuando no hay EEFF manual cargado (o no alcanza para TTM/1
+trimestre). Ver _desde_manual().
 """
 
 import data_service
@@ -19,6 +24,15 @@ import data_service
 # El EEFF trimestral manual se ingresa en millones de CLP (mismo formato que
 # el resto del formulario de /posiciones); yfinance reporta en CLP nominal.
 _MM = 1_000_000
+
+# Múltiplos "justos" para el precio de compra objetivo (ver _precio_justo):
+# el mismo techo que ya usa _score() para clasificar "BARATA" (no un DCF ni
+# una proyección — coherente con el enfoque "cash flow real, sin narrativa"
+# del resto del proyecto). EV/EBITDA es la base primaria; EV/Ventas 1x solo
+# se usa de respaldo cuando el EBITDA es negativo o nulo (ahí el múltiplo de
+# EBITDA no tiene un precio "justo" bien definido).
+FAIR_EV_EBITDA = 8
+FAIR_EV_REVENUE = 1
 
 
 def _clasificacion(score):
@@ -107,39 +121,87 @@ def _calcular_ev(eeff, market_cap, periodo):
     }
 
 
+def _precio_justo(ebitda, revenue, ev, market_cap, precio_actual):
+    """Precio de compra objetivo por acción: el precio al que el mercado
+    estaría pagando exactamente el múltiplo "barata" (FAIR_EV_EBITDA, o
+    FAIR_EV_REVENUE si el EBITDA no sirve de base), no más.
+
+    Deuda neta se despeja del propio EV ya calculado (ev = market_cap +
+    deuda_neta, para cualquier fuente — manual o yfinance), así que no hace
+    falta traer de nuevo deuda_financiera/efectivo. Acciones fuera de
+    /posiciones o sin historial de precio (market_cap o precio_actual en 0
+    o None) no tienen un precio justo calculable — se omite (None) en vez
+    de mostrar una cifra engañosa.
+
+    None también cuando el "EV justo" (múltiplo × EBITDA o ventas) no
+    alcanza a cubrir la deuda neta actual: significa que, a este nivel de
+    apalancamiento, ni el negocio completo vale lo suficiente para que haya
+    un precio por acción positivo bajo este método — un resultado honesto
+    para una empresa muy endeudada, no un error de cálculo."""
+    if not market_cap or not precio_actual or ev is None:
+        return None
+
+    deuda_neta = ev - market_cap
+
+    ev_justo = None
+    if ebitda is not None and ebitda > 0:
+        ev_justo = FAIR_EV_EBITDA * ebitda
+    elif revenue is not None and revenue > 0:
+        ev_justo = FAIR_EV_REVENUE * revenue
+    if ev_justo is None:
+        return None
+
+    market_cap_justo = ev_justo - deuda_neta
+    if market_cap_justo <= 0:
+        return None
+
+    return market_cap_justo * precio_actual / market_cap
+
+
 def evaluate(ticker):
     """Calcula la clasificación de valoración por EV para un ticker.
 
-    Orden de fuentes: yfinance primero; si no trae EV/EBITDA ni EV/Ventas
-    (pasa seguido con acciones ilíquidas de la BCS, o con bancos como
-    BICE.SN donde el ratio no aplica al modelo de negocio), se intenta
-    reconstruir desde el EEFF trimestral cargado a mano en /posiciones. Si
-    tampoco hay eso, la clasificación queda "SIN DATOS" en vez de omitir el
-    ticker.
+    Orden de fuentes: EEFF trimestral manual primero (informe auditado de
+    la CMF, mismo criterio de precedencia que dividendos_bcs.py sobre
+    yfinance para acciones chilenas); si no hay EEFF cargado (o no trae
+    suficiente para calcular ni EV/EBITDA ni EV/Ventas), se cae a yfinance.
+    Si tampoco hay eso, la clasificación queda "SIN DATOS" en vez de omitir
+    el ticker.
     """
     fund = data_service.get_fundamentales(ticker) or {}
-    ev = fund.get("enterprise_value")
-    ev_ebitda = fund.get("ev_to_ebitda")
-    ev_revenue = fund.get("ev_to_revenue")
-    ebitda = fund.get("ebitda")
-    revenue = fund.get("total_revenue")
-    fuente = "yfinance"
+    ev = ev_ebitda = ev_revenue = ebitda = revenue = None
+    fuente = None
+
+    manual = _desde_manual(ticker, fund.get("market_cap"))
+    if manual:
+        ev = manual["ev"]
+        ev_ebitda = manual["ev_ebitda"]
+        ev_revenue = manual["ev_revenue"]
+        ebitda = manual["ebitda"]
+        revenue = manual["revenue"]
+        fuente = f"manual ({manual['periodo']})"
 
     if ev_ebitda is None and ev_revenue is None:
-        manual = _desde_manual(ticker, fund.get("market_cap"))
-        if manual:
-            ev = manual["ev"]
-            ev_ebitda = manual["ev_ebitda"]
-            ev_revenue = manual["ev_revenue"]
-            ebitda = manual["ebitda"]
-            revenue = manual["revenue"]
-            fuente = f"manual ({manual['periodo']})"
+        ev = fund.get("enterprise_value")
+        ev_ebitda = fund.get("ev_to_ebitda")
+        ev_revenue = fund.get("ev_to_revenue")
+        ebitda = fund.get("ebitda")
+        revenue = fund.get("total_revenue")
+        if ev_ebitda is not None or ev_revenue is not None:
+            fuente = "yfinance"
+
+    resumen = data_service.get_summary(ticker)
+    precio_actual = resumen.get("last_close") if resumen else None
+    market_cap = fund.get("market_cap")
 
     if ev_ebitda is None and ev_revenue is None:
         return {
             "ticker": ticker,
             "enterprise_value": ev,
-            "market_cap": fund.get("market_cap"),
+            "market_cap": market_cap,
+            "precio_actual": precio_actual,
+            "precio_justo": None,
+            "diferencia_pct": None,
             "ebitda": ebitda,
             "revenue": revenue,
             "ev_ebitda": None,
@@ -149,17 +211,27 @@ def evaluate(ticker):
             "score": 0,
             "clasificacion": "SIN DATOS",
             "razones": [
-                "Yahoo Finance no reporta EV/EBITDA ni EV/Ventas para este ticker, "
-                "y no hay EEFF trimestral cargado a mano en /posiciones"
+                "No hay EEFF trimestral cargado a mano en /posiciones, y Yahoo "
+                "Finance tampoco reporta EV/EBITDA ni EV/Ventas para este ticker"
             ],
         }
 
     score, razones = _score(ev_ebitda, ev_revenue, ebitda)
 
+    precio_justo = _precio_justo(ebitda, revenue, ev, market_cap, precio_actual)
+    diferencia_pct = (
+        round((precio_justo / precio_actual - 1) * 100, 1)
+        if precio_justo is not None and precio_actual
+        else None
+    )
+
     return {
         "ticker": ticker,
         "enterprise_value": ev,
-        "market_cap": fund.get("market_cap"),
+        "market_cap": market_cap,
+        "precio_actual": precio_actual,
+        "precio_justo": round(precio_justo, 2) if precio_justo is not None else None,
+        "diferencia_pct": diferencia_pct,
         "ebitda": ebitda,
         "revenue": revenue,
         "ev_ebitda": round(ev_ebitda, 2) if ev_ebitda is not None else None,

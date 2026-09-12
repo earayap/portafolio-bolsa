@@ -22,12 +22,10 @@
         <nav class="topnav">
             <a href="/" class="active">Resumen</a>
             <a href="/distribucion">Distribución</a>
-            <a href="/screener">Screener</a>
             <a href="/valor-empresa">Valor Empresa</a>
-            <a href="/backtest">Backtest</a>
-            <a href="/simulador">Simulador</a>
             <a href="/posiciones">Posiciones</a>
             <a href="/eeff-graficos">EEFF Trimestrales</a>
+            <a href="/asistente">Asistente</a>
         </nav>
         <div class="topbar-actions">
             <div class="market-clock" id="clock"></div>
@@ -47,6 +45,55 @@
     <main class="layout">
         <!-- Panel resumen -->
         <section class="kpis" id="kpis"></section>
+
+        <!-- Contexto de mercado: UF, dólar, TPM, cobre, IPC, UTM -->
+        <section class="pie-card" id="marketPanel">
+            <div class="pie-head">
+                <h2>Contexto de mercado</h2>
+                <div class="pie-total" id="marketUpdated"></div>
+            </div>
+            <div class="stats-grid" id="indicGrid"></div>
+        </section>
+
+        <!-- Detalle completo de la cartera: cantidad, precio, variación y peso -->
+        <section class="pie-card" id="moversPanel">
+            <div class="pie-head">
+                <h2>Detalle de tu cartera</h2>
+                <div class="pie-total muted" id="moversCount"></div>
+            </div>
+            <div class="screener-table-wrap">
+                <table class="screener-table">
+                    <thead>
+                        <tr>
+                            <th>Acción</th>
+                            <th>Cantidad</th>
+                            <th>Precio</th>
+                            <th>Variación día</th>
+                            <th>Valor de mercado</th>
+                            <th>Peso en cartera</th>
+                        </tr>
+                    </thead>
+                    <tbody id="moversBody"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Dividendos cobrados y próximos declarados -->
+        <section class="pie-card" id="divPanel">
+            <div class="pie-head">
+                <h2>Dividendos</h2>
+                <div class="pie-total" id="divTotal12m"></div>
+            </div>
+            <p class="muted" id="divNext"></p>
+            <div class="screener-table-wrap">
+                <table class="screener-table">
+                    <thead>
+                        <tr><th>Acción</th><th>Fecha de pago</th><th>Monto/acción</th><th>Total recibido</th></tr>
+                    </thead>
+                    <tbody id="divRecentBody"></tbody>
+                </table>
+            </div>
+        </section>
 
         <div class="content">
             <!-- Listado lateral -->

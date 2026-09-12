@@ -19,12 +19,10 @@
         <nav class="topnav">
             <a href="/">Resumen</a>
             <a href="/distribucion">Distribución</a>
-            <a href="/screener">Screener</a>
             <a href="/valor-empresa" class="active">Valor Empresa</a>
-            <a href="/backtest">Backtest</a>
-            <a href="/simulador">Simulador</a>
             <a href="/posiciones">Posiciones</a>
             <a href="/eeff-graficos">EEFF Trimestrales</a>
+            <a href="/asistente">Asistente</a>
         </nav>
         <div class="topbar-actions">
             <div class="market-clock" id="clock"></div>
@@ -40,14 +38,17 @@
     <main class="layout">
         <p class="dist-intro">
             Clasificación de valoración pura por <strong>Valor de Empresa (EV)</strong>,
-            sin mezclar riesgo ni retorno: a diferencia del P/E del
-            <a href="/screener">Screener</a>, el <strong>EV/EBITDA</strong> y el
+            sin mezclar riesgo ni retorno: a diferencia del P/E del score de
+            señales (COMPRAR/MANTENER/VENDER, visible en Resumen), el <strong>EV/EBITDA</strong> y el
             <strong>EV/Ventas</strong> descuentan la deuda neta de cada empresa, así
             que comparan negocios con distinta estructura de capital de forma más
-            justa. Solo datos observados hoy — sin proyecciones. Cuando Yahoo
-            Finance no trae el EV/EBITDA o EV/Ventas de un ticker (pasa seguido
-            con acciones ilíquidas de la BCS), se reconstruye desde el EEFF
-            trimestral cargado a mano en <a href="/posiciones">Posiciones</a>.
+            justa. Solo datos observados hoy — sin proyecciones. Fuente preferida:
+            el EEFF trimestral cargado a mano en <a href="/posiciones">Posiciones</a>
+            (informe auditado de la CMF, agregado a TTM cuando hay 4+ trimestres
+            cargados) — mismo criterio que los dividendos oficiales de la BCS: el
+            dato local tiene precedencia sobre Yahoo Finance, que puede traer
+            EV/EBITDA poco confiable para acciones ilíquidas. Yahoo Finance solo se
+            usa como respaldo cuando no hay EEFF cargado para un ticker.
         </p>
 
         <div class="kpis" id="veKpis"></div>
@@ -57,6 +58,7 @@
             <div class="legend-item"><strong>EV/EBITDA</strong> — EV dividido por la utilidad operativa antes de intereses, impuestos y depreciación. Más bajo = más barata en relación a lo que genera el negocio, ya descontada la deuda.</div>
             <div class="legend-item"><strong>EV/Ventas</strong> — EV dividido por los ingresos. Útil cuando el EBITDA es volátil o negativo.</div>
             <div class="legend-item"><strong>EBITDA negativo</strong> — el negocio pierde a nivel operativo: se penaliza directamente, no es "barata", es una señal de riesgo.</div>
+            <div class="legend-item"><strong>Precio justo</strong> — precio por acción al que el mercado estaría pagando exactamente el múltiplo "barata" (8x EV/EBITDA, o 1x EV/Ventas si el EBITDA es negativo/nulo). No es un DCF ni una proyección — es el mismo techo que ya clasifica BARATA/CARA, expresado en pesos por acción. — sin datos si la deuda neta ya supera ese EV "justo".</div>
         </div>
 
         <div class="screener-table-wrap">
@@ -69,6 +71,9 @@
                         <th title="EV / EBITDA">EV/EBITDA</th>
                         <th title="EV / Ingresos">EV/Ventas</th>
                         <th>EBITDA</th>
+                        <th>Precio actual</th>
+                        <th title="Precio al que el mercado pagaría exactamente 8x EV/EBITDA (o 1x EV/Ventas si no hay EBITDA positivo) — no es una proyección, es el mismo techo 'BARATA' de la clasificación">Precio justo</th>
+                        <th title="Precio justo vs. precio actual. Positivo = está por debajo de lo que este método considera un precio justo de compra.">% vs. justo</th>
                         <th>Sector</th>
                         <th title="yfinance, o el EEFF trimestral cargado a mano en /posiciones">Fuente</th>
                         <th>Motivos</th>
