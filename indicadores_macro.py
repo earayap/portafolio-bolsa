@@ -1,4 +1,4 @@
-"""Indicadores macroeconómicos chilenos (mindicador.cl).
+"""Indicadores macroeconómicos chilenos (mindicador.cl) + commodities (yfinance).
 
 Fuente: API pública del Banco Central / mindicador.cl — no requiere key.
 https://mindicador.cl/api
@@ -10,6 +10,13 @@ Se usan como contexto para las decisiones de inversión:
 - ipc:   Variación mensual del IPC
 - tpm:   Tasa de Política Monetaria del Banco Central
 - libra_cobre: Precio de la libra de cobre (USD), motor del IPSA
+
+mindicador.cl no cubre otros commodities relevantes para exportadoras
+chilenas (mineras de hierro, forestales), así que esos se completan con
+futuros de Yahoo Finance vía yfinance (ver COMMODITY_TICKERS). La celulosa
+(pulpa BHKP) queda deliberadamente fuera: no existe futuro transado ni API
+pública gratuita — los índices de referencia (FOEX PIX, RISI) son de pago,
+mismo gotcha que las EEFF de emisores no bancarios en la CMF.
 """
 
 import logging
@@ -22,6 +29,12 @@ log = logging.getLogger("indicadores_macro")
 BASE_URL = "https://mindicador.cl/api"
 INDICADORES = ["uf", "dolar", "utm", "ipc", "tpm", "libra_cobre"]
 TIMEOUT = 10
+
+# codigo interno -> ticker de futuro en Yahoo Finance
+COMMODITY_TICKERS = {
+    "hierro": "TIO=F",  # Mineral de hierro 62% Fe CFR China (TSI), SGX
+    "oro": "GC=F",  # Oro, COMEX
+}
 
 
 def _fetch_indicador(codigo):
@@ -47,13 +60,40 @@ def _fetch_indicador(codigo):
     return records
 
 
+def _fetch_commodity_yf(codigo, ticker, period="1mo"):
+    """Descarga el precio de cierre diario de un futuro desde Yahoo Finance.
+    Devuelve lista de {codigo, date, value} o [] si falla."""
+    try:
+        import yfinance as yf
+
+        hist = yf.Ticker(ticker).history(period=period)
+    except Exception as exc:
+        log.warning("No se pudo descargar el commodity %s (%s): %s", codigo, ticker, exc)
+        return []
+
+    records = []
+    for fecha, row in hist.iterrows():
+        try:
+            records.append(
+                {"codigo": codigo, "date": fecha.strftime("%Y-%m-%d"), "value": float(row["Close"])}
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return records
+
+
 def fetch_all():
-    """Descarga todos los indicadores configurados. Devuelve dict codigo -> records."""
+    """Descarga todos los indicadores + commodities configurados. Devuelve
+    dict codigo -> records."""
     resultado = {}
     for codigo in INDICADORES:
         recs = _fetch_indicador(codigo)
         resultado[codigo] = recs
         log.info("%s: %d puntos descargados", codigo, len(recs))
+    for codigo, ticker in COMMODITY_TICKERS.items():
+        recs = _fetch_commodity_yf(codigo, ticker)
+        resultado[codigo] = recs
+        log.info("%s: %d puntos descargados (yfinance %s)", codigo, len(recs), ticker)
     return resultado
 
 

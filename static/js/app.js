@@ -188,10 +188,19 @@ const INDIC_META = {
   dolar: { label: "Dólar (USD/CLP)", fmt: (v) => "$" + fmtCLP(v), pctChange: true },
   tpm: { label: "TPM", fmt: (v) => v.toFixed(2) + "%", pctChange: false },
   libra_cobre: { label: "Cobre (USD/lb)", fmt: (v) => "US$" + v.toFixed(2), pctChange: true },
+  hierro: { label: "Hierro 62% Fe (USD/ton)", fmt: (v) => "US$" + v.toFixed(2), pctChange: true },
+  celulosa: {
+    label: "Celulosa (BHKP)",
+    fmt: () => "N/D",
+    pctChange: false,
+    unavailable: true,
+    emptyNote: "Sin fuente pública gratuita (índices FOEX/RISI son de pago)",
+  },
+  oro: { label: "Oro (USD/oz)", fmt: (v) => "US$" + fmtCLP(v), pctChange: true },
   ipc: { label: "IPC (var. mensual)", fmt: (v) => (v >= 0 ? "+" : "") + v.toFixed(2) + "%", pctChange: false },
   utm: { label: "UTM", fmt: (v) => "$" + fmtCLP(v), pctChange: true },
 };
-const INDIC_ORDER = ["uf", "dolar", "tpm", "libra_cobre", "ipc", "utm"];
+const INDIC_ORDER = ["uf", "dolar", "tpm", "libra_cobre", "hierro", "celulosa", "oro", "ipc", "utm"];
 
 async function loadIndicadores() {
   state.indicadores = {};
@@ -215,7 +224,9 @@ function renderMarketPanel() {
     const hist = state.indicadores[code] || [];
     const last = hist[hist.length - 1];
     if (!last) {
-      return `<div class="stat"><div class="s-label">${meta.label}</div><div class="s-value muted">—</div></div>`;
+      const value = meta.unavailable ? "N/D" : "—";
+      const note = meta.emptyNote || "";
+      return `<div class="stat"><div class="s-label">${meta.label}</div><div class="s-value muted">${value}</div><div class="s-sub muted">${note}</div></div>`;
     }
     if (!latestDate || last.date > latestDate) latestDate = last.date;
     const prev = hist[hist.length - 2];
@@ -250,17 +261,35 @@ function renderMovers() {
           const precio = x.precio_manual != null ? x.precio_manual : x.last_close;
           const variacion = x.precio_manual != null ? "—" : pct(x.change_pct);
           const varCls = x.precio_manual != null ? "" : cls(x.change_pct);
+          const tienePosicion = (x.cantidad || 0) > 0 && (x.precio_compra || 0) > 0;
+          const ganancia = tienePosicion
+            ? `<span class="${cls(x.pnl)}" title="Valor de mercado ${money(x.valor_mercado || 0)} − invertido ${money(x.invertido || 0)}">${moneySigned(x.pnl)}</span>`
+            : "—";
+          const rentabilidad = tienePosicion
+            ? `<span class="${cls(x.pnl_pct)}" title="(${money(precio)} − ${money(x.precio_compra)}) / ${money(x.precio_compra)}">${pct(x.pnl_pct)}</span>`
+            : "—";
+          const estado = !tienePosicion
+            ? `<span class="badge badge-signal sig-hold">Sin posición</span>`
+            : x.pnl > 0
+            ? `<span class="badge badge-signal sig-buy">En ganancia</span>`
+            : x.pnl < 0
+            ? `<span class="badge badge-signal sig-sell">En pérdida</span>`
+            : `<span class="badge badge-signal sig-hold">Neutro</span>`;
           return `<tr>
             <td><div class="st-name">${x.name} ${staleBadge(x)}</div><div class="st-ticker">${x.ticker} ${signalBadge(x.ticker)}</div></td>
             <td>${fmtInt(x.cantidad || 0)}</td>
+            <td>$${fmtCLP(x.precio_compra || 0)}</td>
             <td>$${fmtCLP(precio)}</td>
             <td class="${varCls}">${variacion}</td>
+            <td>${ganancia}</td>
+            <td>${rentabilidad}</td>
+            <td>${estado}</td>
             <td>${money(x.valor_mercado || 0)}</td>
             <td>${peso.toFixed(1)}%</td>
           </tr>`;
         })
         .join("")
-    : `<tr><td colspan="6" class="legend-empty">Sin datos.</td></tr>`;
+    : `<tr><td colspan="10" class="legend-empty">Sin datos.</td></tr>`;
 
   const countEl = document.getElementById("moversCount");
   if (countEl) countEl.textContent = `${rows.length} posición${rows.length === 1 ? "" : "es"}`;
