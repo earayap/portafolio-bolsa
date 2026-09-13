@@ -13,10 +13,16 @@ Se usan como contexto para las decisiones de inversión:
 
 mindicador.cl no cubre otros commodities relevantes para exportadoras
 chilenas (mineras de hierro, forestales), así que esos se completan con
-futuros de Yahoo Finance vía yfinance (ver COMMODITY_TICKERS). La celulosa
-(pulpa BHKP) queda deliberadamente fuera: no existe futuro transado ni API
-pública gratuita — los índices de referencia (FOEX PIX, RISI) son de pago,
-mismo gotcha que las EEFF de emisores no bancarios en la CMF.
+futuros de Yahoo Finance vía yfinance (ver COMMODITY_TICKERS).
+
+La celulosa (pulpa kraft) no tiene futuro en Yahoo Finance, pero sí se
+transa como futuro de pulpa de madera blanqueada de coníferas en la Bolsa
+de Futuros de Shanghái (SHFE, contrato "SP", cotizado en CNY/tonelada) —
+es el mismo dato que muestra TradingEconomics en su página de Kraft Pulp.
+Sina Finance publica el histórico diario de ese contrato continuo (SP0) en
+un endpoint JSON no oficial pero público y sin key, usado también por
+proyectos como akshare/tushare para datos de futuros chinos. Ver
+_fetch_sina_futures.
 """
 
 import logging
@@ -34,6 +40,12 @@ TIMEOUT = 10
 COMMODITY_TICKERS = {
     "hierro": "TIO=F",  # Mineral de hierro 62% Fe CFR China (TSI), SGX
     "oro": "GC=F",  # Oro, COMEX
+}
+
+SINA_FUTURES_URL = "https://stock2.finance.sina.com.cn/futures/api/json.php/InnerFuturesNewService.getDailyKLine"
+# codigo interno -> símbolo de contrato continuo en Sina Finance
+SINA_FUTURES = {
+    "celulosa": "SP0",  # Pulpa de madera (纸浆) continuo, SHFE, CNY/tonelada
 }
 
 
@@ -82,6 +94,30 @@ def _fetch_commodity_yf(codigo, ticker, period="1mo"):
     return records
 
 
+def _fetch_sina_futures(codigo, symbol, limit=90):
+    """Descarga el histórico diario de un contrato continuo de futuros desde
+    Sina Finance (endpoint público no oficial, sin key). Usa el precio de
+    liquidación diaria ("s") — es el que reportan los agregadores tipo
+    TradingEconomics — con fallback al cierre ("c") si falta. Devuelve lista
+    de {codigo, date, value} o [] si falla."""
+    try:
+        resp = requests.get(SINA_FUTURES_URL, params={"symbol": symbol}, timeout=TIMEOUT)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        log.warning("No se pudo descargar el futuro Sina %s (%s): %s", codigo, symbol, exc)
+        return []
+
+    records = []
+    for punto in data[-limit:]:
+        try:
+            valor = float(punto.get("s") or punto["c"])
+            records.append({"codigo": codigo, "date": punto["d"], "value": valor})
+        except (KeyError, TypeError, ValueError):
+            continue
+    return records
+
+
 def fetch_all():
     """Descarga todos los indicadores + commodities configurados. Devuelve
     dict codigo -> records."""
@@ -94,6 +130,10 @@ def fetch_all():
         recs = _fetch_commodity_yf(codigo, ticker)
         resultado[codigo] = recs
         log.info("%s: %d puntos descargados (yfinance %s)", codigo, len(recs), ticker)
+    for codigo, symbol in SINA_FUTURES.items():
+        recs = _fetch_sina_futures(codigo, symbol)
+        resultado[codigo] = recs
+        log.info("%s: %d puntos descargados (Sina futures %s)", codigo, len(recs), symbol)
     return resultado
 
 
